@@ -1,0 +1,48 @@
+{
+  "name": "agyx",
+  "version": "0.1.0",
+  "description": "Multi-account session supervisor for Google Antigravity CLI",
+  "type": "module",
+  "bin": {
+    "agyx": "dist/src/cli.js",
+    "agyx-agy": "dist/src/shim.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "prepack": "npm run clean && npm run build",
+    "test": "npm run clean && npm run build && node --test dist/test/*.test.js"
+  },
+  "keywords": [
+    "antigravity",
+    "gemini",
+    "cli",
+    "oauth",
+    "account-switcher"
+  ],
+  "author": "Dongwook Chan",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dongwook-chan/agyx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dongwook-chan/agyx/issues"
+  },
+  "homepage": "https://github.com/dongwook-chan/agyx#readme",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
