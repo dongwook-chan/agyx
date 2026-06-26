@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
 import {
+  markProfileActivated,
   profileNameFromEmail,
   uniqueProfileName,
   validateProfileName,
@@ -15,6 +16,26 @@ import {
   withConversation,
 } from "../src/processes.js";
 import { detectConversation } from "../src/session.js";
+
+test("activation keeps exhausted quota until reset time", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state = {
+    version: 1 as const,
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "exhausted" as const,
+        quotaResetAt: "2026-06-27T00:00:00.000Z",
+      },
+    ],
+  };
+
+  markProfileActivated(state, "a", now, false);
+  assert.equal(state.profiles[0]!.quotaStatus, "exhausted");
+  assert.equal(state.profiles[0]!.quotaResetAt, "2026-06-27T00:00:00.000Z");
+});
 
 test("validates profile names", () => {
   assert.equal(validateProfileName("work-1.test"), "work-1.test");

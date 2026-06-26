@@ -89,7 +89,11 @@ export async function upsertProfile(
     existing.credentialVerifiedAt = email ? nowString : undefined;
     existing.credentialMismatchAt = undefined;
     existing.credentialError = undefined;
-    if (existing.quotaStatus === "exhausted") {
+    if (
+      existing.quotaStatus === "exhausted"
+      && existing.quotaResetAt
+      && Date.parse(existing.quotaResetAt) <= now.getTime()
+    ) {
       existing.quotaStatus = "available";
       existing.quotaResetAt = undefined;
       existing.lastQuotaReason = undefined;
