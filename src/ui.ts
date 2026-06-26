@@ -104,6 +104,14 @@ function profileLine(row: ProfileView, widths: number[]): string {
   }).join("  ");
 }
 
+function profileHeaderLine(widths: number[]): string {
+  return profileHeaders.map((header, index) =>
+    index === 1 || index === 10
+      ? padStartWidth(header, widths[index] ?? stringWidth(header))
+      : padEndWidth(header, widths[index] ?? stringWidth(header))
+  ).join("  ");
+}
+
 interface ProfileChoice {
   value: string;
   name: string;
@@ -123,6 +131,7 @@ export type ProfilePickerAction =
 const profilePicker = createPrompt<ProfilePickerAction, {
   message: string;
   mode: ProfilePickerMode;
+  header: string;
   choices: ProfileChoice[];
   default?: string;
   pageSize?: number;
@@ -187,11 +196,12 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   const help = config.mode === "use"
     ? color.gray("↑↓ navigate • ⏎ select • d delete • q quit")
     : color.gray("↑↓ navigate • d delete • q quit");
+  const reservedDescription = description ?? " ";
   return [
     [prefix, config.message].filter(Boolean).join(" "),
+    config.header,
     page,
-    " ",
-    description,
+    reservedDescription,
     help,
   ].filter(Boolean).join("\n").trimEnd() + cursorHide;
 });
@@ -259,6 +269,7 @@ export async function pickProfileAction(
     message: mode === "use" && suggested
       ? `Select profile (default: next ${suggested})`
       : "Profiles",
+    header: profileHeaderLine(widths),
     default: mode === "use" ? suggested : state.activeProfile,
     choices: rows.map((row) => ({
       value: row.profile.name,
