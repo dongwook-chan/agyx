@@ -10,7 +10,12 @@ import {
   switchToNextProfile,
   verifyAllProfiles,
 } from "./coordinator.js";
-import { installShellIntegration, shellInit } from "./install.js";
+import {
+  installShellIntegration,
+  shellInit,
+  shellIntegrationInstalled,
+  shellIntegrationPath,
+} from "./install.js";
 import { keychain } from "./keychain.js";
 import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
@@ -21,7 +26,7 @@ import { confirmAction, pickProfileAction, printProfileTable, promptText } from 
 const help = `agyx — multi-account session supervisor for Antigravity CLI
 
 Usage:
-  agyx install                         Install transparent agy shell shim
+  agyx install                         Install agy shell function
   agyx session -- [agy options]        Run agy under a restartable supervisor
   agyx save [name] [--email EMAIL]     Save the current Keychain account
   agyx login [name] [--email EMAIL] [--no-resume]
@@ -170,11 +175,14 @@ async function main(): Promise<number> {
   switch (command) {
     case "install": {
       const path = await installShellIntegration();
-      console.log(`Installed agyx shell integration in ${path}`);
-      console.log("Open a new terminal or run:");
+      console.log(`Installed agy shell function in ${path}`);
+      console.log("This does not change the current terminal automatically.");
+      console.log("Open a new terminal, or run:");
       console.log(`  source ${path}`);
       console.log("For this terminal only, you can also run:");
       console.log('  eval "$(agyx shell-init)"');
+      console.log("Verify with:");
+      console.log("  type agy");
       return 0;
     }
     case "shell-init":
@@ -282,6 +290,9 @@ async function main(): Promise<number> {
       const sessions = await sessionRecords();
       console.log(`agy: ${await findRealAgy()}`);
       console.log(`platform: ${process.platform}`);
+      console.log(`shell integration file: ${shellIntegrationPath()}`);
+      console.log(`shell integration installed: ${await shellIntegrationInstalled() ? "yes" : "no"}`);
+      console.log("current shell check: run `type agy` in your terminal; it should report a shell function");
       console.log(`profiles: ${state.profiles.length}`);
       console.log(`active profile: ${state.activeProfile ?? "unmanaged"}`);
       console.log(`supervised sessions: ${sessions.length}`);

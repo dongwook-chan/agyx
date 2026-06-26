@@ -18,6 +18,10 @@ agyx install
 source ~/.zshrc
 ```
 
+`agyx install` writes a shell function to your shell rc file. It does not modify
+the already-open terminal automatically. Open a new terminal, or run the
+displayed `source ...` command.
+
 For the current terminal only, without reloading your shell rc file:
 
 ```bash
@@ -35,6 +39,14 @@ The shell integration makes `agy` transparently run as:
 ```text
 agyx session -- <all original agy arguments>
 ```
+
+Verify the active terminal with:
+
+```bash
+type agy
+```
+
+Expected result: `agy` is a shell function that calls `agyx session`.
 
 All original options are forwarded, including:
 

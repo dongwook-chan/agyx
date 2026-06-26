@@ -7,15 +7,19 @@ import { findRealAgy } from "./processes.js";
 const startMarker = "# >>> agyx >>>";
 const endMarker = "# <<< agyx <<<";
 
+export function shellIntegrationPath(): string {
+  const shell = process.env.SHELL?.split("/").at(-1) ?? "zsh";
+  return shell === "bash"
+    ? join(homedir(), ".bashrc")
+    : join(homedir(), ".zshrc");
+}
+
 export function shellInit(): string {
   return `agy() { command agyx session -- "$@"; }`;
 }
 
 export async function shellIntegrationInstalled(): Promise<boolean> {
-  const shell = process.env.SHELL?.split("/").at(-1) ?? "zsh";
-  const rcPath = shell === "bash"
-    ? join(homedir(), ".bashrc")
-    : join(homedir(), ".zshrc");
+  const rcPath = shellIntegrationPath();
   try {
     return (await readFile(rcPath, "utf8")).includes(startMarker);
   } catch {
@@ -25,10 +29,7 @@ export async function shellIntegrationInstalled(): Promise<boolean> {
 
 export async function installShellIntegration(): Promise<string> {
   await findRealAgy();
-  const shell = process.env.SHELL?.split("/").at(-1) ?? "zsh";
-  const rcPath = shell === "bash"
-    ? join(homedir(), ".bashrc")
-    : join(homedir(), ".zshrc");
+  const rcPath = shellIntegrationPath();
   await ensureParent(rcPath);
   let content = "";
   try { content = await readFile(rcPath, "utf8"); }

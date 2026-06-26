@@ -38,11 +38,14 @@ async function promptShellIntegration(): Promise<void> {
     shellIntegrationInstalledAt: new Date().toISOString(),
   };
   await saveState(updated);
-  console.log(`Installed shell integration in ${path}`);
-  console.log("Open a new terminal or run:");
+  console.log(`Installed agy shell function in ${path}`);
+  console.log("This does not change the current terminal automatically.");
+  console.log("Open a new terminal, or run:");
   console.log(`  source ${path}`);
   console.log("For this terminal only, you can also run:");
   console.log('  eval "$(agyx shell-init)"');
+  console.log("Verify with:");
+  console.log("  type agy");
 }
 
 async function promptGithubStar(): Promise<void> {
