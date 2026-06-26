@@ -96,12 +96,15 @@ function profileCellValues(row: ProfileView): string[] {
 }
 
 function profileLine(row: ProfileView, widths: number[]): string {
-  return profileCells(row).map((cell, index) => {
+  const rawValues = profileCellValues(row);
+  const cells = row.marker === "*" ? rawValues : profileCells(row);
+  const line = cells.map((cell, index) => {
     const raw = profileCellValues(row)[index] ?? "";
     return index === 1 || index === 10
       ? padStartWidth(cell, widths[index] ?? stringWidth(raw))
       : padEndWidth(cell, widths[index] ?? stringWidth(raw));
   }).join("  ");
+  return row.marker === "*" ? color.inverse(line) : line;
 }
 
 function profileHeaderLine(widths: number[]): string {
@@ -237,7 +240,9 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
   });
 
   for (const row of profileRows(state)) {
-    table.push(profileCells(row));
+    table.push(row.marker === "*"
+      ? profileCellValues(row).map((cell) => color.inverse(cell))
+      : profileCells(row));
   }
 
   console.log(table.toString());

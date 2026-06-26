@@ -234,7 +234,6 @@ export function markProfileIneligible(
   profile.lastEligibilityErrorAt = nowString;
   profile.eligibilityReason = event.reason;
   profile.updatedAt = nowString;
-  if (state.activeProfile === name) state.activeProfile = undefined;
 }
 
 export async function recordProfileQuotaExhausted(

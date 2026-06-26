@@ -24,7 +24,7 @@ import {
   runningAgy,
   stopProcesses,
 } from "./processes.js";
-import { selectNextProfile } from "./selection.js";
+import { effectiveProfileStatus, selectNextProfile } from "./selection.js";
 import { SessionRecord } from "./session.js";
 
 interface SessionReply {
@@ -192,6 +192,13 @@ export async function activateProfile(
 }
 
 export async function switchProfile(name: string): Promise<ProfileSwitchResult> {
+  const initialState = await loadState();
+  const profile = initialState.profiles.find((entry) => entry.name === name);
+  if (!profile) throw new Error(`Profile not found: ${name}`);
+  const status = effectiveProfileStatus(profile);
+  if (status !== "ready") {
+    throw new Error(`Profile '${name}' is not selectable: ${status}.`);
+  }
   const sessions = await pauseAll();
   const previousCredential = await keychain.readActive().catch(() => undefined);
   try {

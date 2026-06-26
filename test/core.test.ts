@@ -62,7 +62,8 @@ test("parses and blocks ineligible Antigravity accounts", () => {
   };
   markProfileIneligible(state, "a", event!, now);
   const views = buildProfileViews(state, now);
-  assert.equal(state.activeProfile, undefined);
+  assert.equal(state.activeProfile, "a");
+  assert.equal(views[0]!.marker, "*");
   assert.equal(views[0]!.status, "ineligible");
   assert.equal(views[0]!.selectable, false);
 });

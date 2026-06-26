@@ -6,6 +6,7 @@ const codes = {
   yellow: "\u001b[33m",
   cyan: "\u001b[36m",
   gray: "\u001b[90m",
+  inverse: "\u001b[7m",
 } as const;
 
 function enabled(): boolean {
@@ -25,4 +26,5 @@ export const color = {
   yellow: (value: string) => wrap(codes.yellow, value),
   cyan: (value: string) => wrap(codes.cyan, value),
   gray: (value: string) => wrap(codes.gray, value),
+  inverse: (value: string) => wrap(codes.inverse, value),
 };
