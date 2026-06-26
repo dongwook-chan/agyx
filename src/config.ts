@@ -15,6 +15,11 @@ export interface ProfileRecord {
   quotaResetAt?: string;
   quotaStatus?: "unknown" | "available" | "exhausted";
   lastQuotaReason?: string;
+  credentialStatus?: "unknown" | "verified" | "mismatch" | "error";
+  verifiedEmail?: string;
+  credentialVerifiedAt?: string;
+  credentialMismatchAt?: string;
+  credentialError?: string;
   selectionCount?: number;
   disabled?: boolean;
   priority?: number;
@@ -79,6 +84,11 @@ export async function upsertProfile(
     existing.email = email ?? existing.email;
     existing.authenticatedAt = nowString;
     existing.updatedAt = nowString;
+    existing.credentialStatus = email ? "verified" : "unknown";
+    existing.verifiedEmail = email ?? undefined;
+    existing.credentialVerifiedAt = email ? nowString : undefined;
+    existing.credentialMismatchAt = undefined;
+    existing.credentialError = undefined;
     if (existing.quotaStatus === "exhausted") {
       existing.quotaStatus = "available";
       existing.quotaResetAt = undefined;
@@ -92,6 +102,9 @@ export async function upsertProfile(
       updatedAt: nowString,
       authenticatedAt: nowString,
       quotaStatus: "available",
+      credentialStatus: email ? "verified" : "unknown",
+      verifiedEmail: email,
+      credentialVerifiedAt: email ? nowString : undefined,
       selectionCount: 0,
     });
   }
@@ -153,6 +166,44 @@ export function markProfileQuotaExhausted(
   profile.lastQuotaReason = event.reason;
   profile.quotaResetAt = event.resetAt;
   profile.updatedAt = nowString;
+}
+
+export function markProfileCredentialVerified(
+  state: State,
+  name: string,
+  actualEmail: string,
+  now = new Date(),
+): void {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) return;
+  const nowString = now.toISOString();
+  profile.email = profile.email ?? actualEmail;
+  profile.credentialStatus = "verified";
+  profile.verifiedEmail = actualEmail;
+  profile.credentialVerifiedAt = nowString;
+  profile.credentialMismatchAt = undefined;
+  profile.credentialError = undefined;
+  profile.updatedAt = nowString;
+}
+
+export function markProfileCredentialMismatch(
+  state: State,
+  name: string,
+  actualEmail: string | undefined,
+  expectedEmail: string | undefined,
+  now = new Date(),
+): void {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) return;
+  const nowString = now.toISOString();
+  profile.credentialStatus = actualEmail ? "mismatch" : "error";
+  profile.verifiedEmail = actualEmail;
+  profile.credentialMismatchAt = nowString;
+  profile.credentialError = actualEmail
+    ? `expected ${expectedEmail ?? "-"}, got ${actualEmail}`
+    : "credential probe did not return an authenticated email";
+  profile.updatedAt = nowString;
+  if (state.activeProfile === name) state.activeProfile = undefined;
 }
 
 export async function recordProfileQuotaExhausted(

@@ -6,6 +6,7 @@ import {
   uniqueProfileName,
   validateProfileName,
 } from "../src/config.js";
+import { buildProfileViews } from "../src/profile_view.js";
 import { isRequestEventLine, parseQuotaEventLine } from "../src/quota.js";
 import { selectNextProfile } from "../src/selection.js";
 import {
@@ -125,6 +126,75 @@ test("selects the next non-exhausted profile in round-robin order", () => {
       ],
     }, now).name,
     "c",
+  );
+});
+
+test("skips credential mismatch profiles when selecting next", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  assert.equal(
+    selectNextProfile({
+      version: 1,
+      activeProfile: "a",
+      profiles: [
+        {
+          name: "a",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          quotaStatus: "available",
+        },
+        {
+          name: "b",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          quotaStatus: "available",
+          credentialStatus: "mismatch",
+          email: "b@example.com",
+          verifiedEmail: "wrong@example.com",
+        },
+        {
+          name: "c",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          quotaStatus: "available",
+        },
+      ],
+    }, now).name,
+    "c",
+  );
+});
+
+test("builds one shared profile view for list and picker", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const views = buildProfileViews({
+    activeProfile: "b",
+    profiles: [
+      {
+        name: "b",
+        email: "b@example.com",
+        verifiedEmail: "wrong@example.com",
+        credentialStatus: "mismatch",
+        credentialMismatchAt: now.toISOString(),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    ],
+  }, now);
+
+  assert.deepEqual(
+    {
+      marker: views[0]!.marker,
+      name: views[0]!.name,
+      expectedEmail: views[0]!.expectedEmail,
+      actualEmail: views[0]!.actualEmail,
+      status: views[0]!.status,
+    },
+    {
+      marker: "*",
+      name: "b",
+      expectedEmail: "b@example.com",
+      actualEmail: "wrong@example.com",
+      status: "mismatch",
+    },
   );
 });
 

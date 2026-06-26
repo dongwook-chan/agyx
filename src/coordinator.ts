@@ -7,19 +7,24 @@ import {
   loadState,
   logDir,
   markProfileActivated,
+  markProfileCredentialMismatch,
+  markProfileCredentialVerified,
   profileNameFromEmail,
   runtimeDir,
   saveState,
+  State,
   upsertProfile,
   uniqueProfileName,
   validateProfileName,
 } from "./config.js";
 import { keychain } from "./keychain.js";
+import { detectCredentialEmail } from "./google_auth.js";
 import {
   findRealAgy,
   runningAgy,
   stopProcesses,
 } from "./processes.js";
+import { selectNextProfile } from "./selection.js";
 import { SessionRecord } from "./session.js";
 
 interface SessionReply {
@@ -91,6 +96,11 @@ export interface ProfileCaptureResult {
   email?: string;
 }
 
+export interface ProfileSwitchResult {
+  name: string;
+  email?: string;
+}
+
 function resolveProfileName(
   state: Awaited<ReturnType<typeof loadState>>,
   nameInput: string | undefined,
@@ -129,7 +139,45 @@ export async function saveCurrent(
   return { name, email };
 }
 
-export async function activateProfile(nameInput: string): Promise<void> {
+async function verifyActiveCredential(
+  state: State,
+  name: string,
+): Promise<string> {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) throw new Error(`Profile not found: ${name}`);
+  const expectedEmail = profile.email;
+  const initialCredential = await keychain.readActive();
+  let actualEmail = await detectCredentialEmail(initialCredential);
+  if (!actualEmail) {
+    actualEmail = await detectActiveEmail(
+      join(logDir, `verify-${name}-${Date.now()}.log`),
+    );
+  }
+  const refreshedCredential = await keychain.readActive();
+  actualEmail = actualEmail ?? await detectCredentialEmail(refreshedCredential);
+  if (!actualEmail) {
+    markProfileCredentialMismatch(state, name, undefined, expectedEmail);
+    await saveState(state);
+    throw new Error(
+      `Profile '${name}' credential could not be verified. No authenticated email was detected.`,
+    );
+  }
+  if (expectedEmail && actualEmail !== expectedEmail) {
+    markProfileCredentialMismatch(state, name, actualEmail, expectedEmail);
+    await saveState(state);
+    throw new Error(
+      `Profile '${name}' credential mismatch: expected ${expectedEmail}, got ${actualEmail}.`,
+    );
+  }
+  await keychain.writeProfile(name, refreshedCredential);
+  markProfileCredentialVerified(state, name, actualEmail);
+  return actualEmail;
+}
+
+export async function activateProfile(
+  nameInput: string,
+  options: { verify?: boolean } = {},
+): Promise<ProfileSwitchResult> {
   const name = validateProfileName(nameInput);
   const state = await loadState();
   if (!state.profiles.some((profile) => profile.name === name)) {
@@ -137,15 +185,81 @@ export async function activateProfile(nameInput: string): Promise<void> {
   }
   const credential = await keychain.readProfile(name);
   await keychain.writeActive(credential);
+  const email = options.verify ? await verifyActiveCredential(state, name) : undefined;
   markProfileActivated(state, name);
   await saveState(state);
+  return { name, email };
 }
 
-export async function switchProfile(name: string): Promise<void> {
+export async function switchProfile(name: string): Promise<ProfileSwitchResult> {
   const sessions = await pauseAll();
+  const previousCredential = await keychain.readActive().catch(() => undefined);
   try {
-    await activateProfile(name);
+    return await activateProfile(name, { verify: true });
+  } catch (error) {
+    if (previousCredential) await keychain.writeActive(previousCredential);
+    throw error;
   } finally {
+    await resumeAll(sessions);
+  }
+}
+
+export async function switchToNextProfile(): Promise<ProfileSwitchResult> {
+  const sessions = await pauseAll();
+  const previousCredential = await keychain.readActive().catch(() => undefined);
+  let lastError: Error | undefined;
+  try {
+    for (let attempt = 0; attempt < 10000; attempt += 1) {
+      const candidate = selectNextProfile(await loadState()).name;
+      try {
+        return await activateProfile(candidate, { verify: true });
+      } catch (error) {
+        lastError = error as Error;
+        const profile = (await loadState()).profiles.find((entry) => entry.name === candidate);
+        if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
+          throw error;
+        }
+      }
+    }
+    throw lastError ?? new Error("No selectable profiles.");
+  } catch (error) {
+    if (previousCredential) await keychain.writeActive(previousCredential);
+    throw error;
+  } finally {
+    await resumeAll(sessions);
+  }
+}
+
+export async function verifyAllProfiles(): Promise<State> {
+  const sessions = await pauseAll();
+  const previousCredential = await keychain.readActive().catch(() => undefined);
+  try {
+    const names = (await loadState()).profiles.map((profile) => profile.name);
+    for (const name of names) {
+      const state = await loadState();
+      if (!state.profiles.some((profile) => profile.name === name)) continue;
+      try {
+        const credential = await keychain.readProfile(name);
+        await keychain.writeActive(credential);
+        await verifyActiveCredential(state, name);
+        await saveState(state);
+      } catch (error) {
+        const currentState = await loadState();
+        const profile = currentState.profiles.find((entry) => entry.name === name);
+        if (profile && profile.credentialStatus !== "mismatch") {
+          markProfileCredentialMismatch(
+            currentState,
+            name,
+            undefined,
+            profile.email,
+          );
+          await saveState(currentState);
+        }
+      }
+    }
+    return await loadState();
+  } finally {
+    if (previousCredential) await keychain.writeActive(previousCredential);
     await resumeAll(sessions);
   }
 }

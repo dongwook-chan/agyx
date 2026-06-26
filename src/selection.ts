@@ -1,12 +1,19 @@
 import { ProfileRecord, State } from "./config.js";
 
-export type ProfileRuntimeStatus = "ready" | "exhausted" | "disabled";
+export type ProfileRuntimeStatus =
+  | "ready"
+  | "exhausted"
+  | "disabled"
+  | "mismatch"
+  | "error";
 
 export function effectiveProfileStatus(
   profile: ProfileRecord,
   now = new Date(),
 ): ProfileRuntimeStatus {
   if (profile.disabled) return "disabled";
+  if (profile.credentialStatus === "mismatch") return "mismatch";
+  if (profile.credentialStatus === "error") return "error";
   if (profile.quotaStatus !== "exhausted") return "ready";
   if (!profile.quotaResetAt) return "exhausted";
   return Date.parse(profile.quotaResetAt) > now.getTime()
@@ -41,9 +48,18 @@ export function selectNextProfile(
     .sort((left, right) =>
       Date.parse(left.quotaResetAt!) - Date.parse(right.quotaResetAt!)
     )[0];
+  const credentialIssues = state.profiles
+    .filter((profile) =>
+      profile.credentialStatus === "mismatch"
+      || profile.credentialStatus === "error"
+    )
+    .map((profile) => `${profile.name}:${profile.credentialStatus}`)
+    .join(", ");
   const resetText = earliestReset
     ? ` Earliest reset: ${earliestReset.name} at ${earliestReset.quotaResetAt}.`
     : "";
-  throw new Error(`No selectable profiles.${resetText}`);
+  const credentialText = credentialIssues
+    ? ` Credential issues: ${credentialIssues}.`
+    : "";
+  throw new Error(`No selectable profiles.${credentialText}${resetText}`);
 }
-

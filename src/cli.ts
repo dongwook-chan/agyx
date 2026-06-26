@@ -7,13 +7,14 @@ import {
   saveCurrent,
   sessionRecords,
   switchProfile,
+  switchToNextProfile,
+  verifyAllProfiles,
 } from "./coordinator.js";
 import { installShellIntegration, shellInit } from "./install.js";
 import { keychain } from "./keychain.js";
 import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
 import { loadState, saveState, validateProfileName } from "./config.js";
-import { selectNextProfile } from "./selection.js";
 import { supervise } from "./session.js";
 import { printProfileTable, selectProfileName } from "./ui.js";
 
@@ -27,7 +28,7 @@ Usage:
                                        Pause all sessions and add an account
   agyx use [name]                      Switch account and resume every session
   agyx next                            Rotate to the next selectable account
-  agyx list                            List profiles
+  agyx list [--verify]                 List profiles; optionally verify saved credentials
   agyx current                         Print the active profile
   agyx status                          List supervised terminal sessions
   agyx pause | resume                  Pause or resume all supervised sessions
@@ -62,7 +63,7 @@ async function pickProfile(): Promise<string> {
     throw new Error("Usage: agyx use <name> or run 'agyx use' in an interactive terminal.");
   }
   const state = await loadState();
-  return await selectProfileName(state.profiles, state.activeProfile);
+  return await selectProfileName(state);
 }
 
 async function main(): Promise<number> {
@@ -111,20 +112,28 @@ async function main(): Promise<number> {
       const name = args.shift();
       if (args.length) throw new Error("Usage: agyx use [name]");
       const selected = name ?? await pickProfile();
-      await switchProfile(selected);
-      console.log(`Activated profile '${selected}' and resumed all sessions.`);
+      const result = await switchProfile(selected);
+      console.log(
+        `Activated profile '${result.name}'`
+        + (result.email ? ` (${result.email})` : "")
+        + " and resumed all sessions.",
+      );
       return 0;
     }
     case "next": {
-      const state = await loadState();
-      const name = selectNextProfile(state).name;
-      await switchProfile(name);
-      console.log(`Activated profile '${name}' and resumed all sessions.`);
+      const result = await switchToNextProfile();
+      console.log(
+        `Activated profile '${result.name}'`
+        + (result.email ? ` (${result.email})` : "")
+        + " and resumed all sessions.",
+      );
       return 0;
     }
     case "list": {
-      const state = await loadState();
-      printProfileTable(state.profiles, state.activeProfile);
+      const verify = takeFlag(args, "--verify");
+      if (args.length) throw new Error("Usage: agyx list [--verify]");
+      const state = verify ? await verifyAllProfiles() : await loadState();
+      printProfileTable(state);
       return 0;
     }
     case "current":
