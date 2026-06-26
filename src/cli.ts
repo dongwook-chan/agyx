@@ -132,7 +132,7 @@ async function promptAndRenameProfile(name: string): Promise<string | undefined>
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Refusing to rename without an interactive terminal.");
   }
-  const nextName = (await promptText(`Rename profile '${name}' to`)).trim();
+  const nextName = (await promptText(`Rename profile '${name}' to`))?.trim();
   if (!nextName || nextName === name) return undefined;
   const renamed = await renameProfile(name, nextName);
   return renamed ? nextName : undefined;

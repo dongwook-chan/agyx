@@ -330,8 +330,15 @@ export async function confirmAction(
 export async function promptText(
   message: string,
   defaultValue?: string,
-): Promise<string> {
-  return await input({ message, default: defaultValue });
+): Promise<string | undefined> {
+  try {
+    return await input({ message, default: defaultValue });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 export async function selectProfileName(
