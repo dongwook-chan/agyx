@@ -142,6 +142,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
 }>((config, done) => {
   const [status, setStatus] = useState<"idle" | "done">("idle");
   const [blockedValue, setBlockedValue] = useState<string | undefined>(undefined);
+  const [activeNoticeValue, setActiveNoticeValue] = useState<string | undefined>(undefined);
   const initial = config.default
     ? config.choices.findIndex((choice) => choice.value === config.default)
     : -1;
@@ -167,11 +168,15 @@ const profilePicker = createPrompt<ProfilePickerAction, {
         done({ type: "exit" });
         return;
       }
-      if (choice.selectable || choice.active) {
+      if (choice.active) {
+        setActiveNoticeValue(choice.value);
+        setBlockedValue(undefined);
+      } else if (choice.selectable) {
         setStatus("done");
         done({ type: "select", name: choice.value });
       } else {
         setBlockedValue(choice.value);
+        setActiveNoticeValue(undefined);
       }
       return;
     }
@@ -179,6 +184,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
       const offset = isUpKey(key) ? -1 : 1;
       setActive((active + offset + config.choices.length) % config.choices.length);
       setBlockedValue(undefined);
+      setActiveNoticeValue(undefined);
     }
   });
 
@@ -196,7 +202,9 @@ const profilePicker = createPrompt<ProfilePickerAction, {
       : [prefix, config.message].filter(Boolean).join(" ");
   }
 
-  const description = blockedValue === choice.value
+  const description = activeNoticeValue === choice.value
+    ? `'${choice.value}' is already active.`
+    : blockedValue === choice.value
     ? choice.blockedDescription
     : choice.description;
   const help = config.mode === "use"
