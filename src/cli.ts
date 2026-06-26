@@ -16,7 +16,7 @@ import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
 import { loadState, saveState, validateProfileName } from "./config.js";
 import { supervise } from "./session.js";
-import { confirmAction, pickProfileAction, printProfileTable } from "./ui.js";
+import { confirmAction, pickProfileAction, printProfileTable, promptText } from "./ui.js";
 
 const help = `agyx — multi-account session supervisor for Antigravity CLI
 
@@ -32,6 +32,7 @@ Usage:
   agyx current                         Print the active profile
   agyx status                          List supervised terminal sessions
   agyx pause | resume                  Pause or resume all supervised sessions
+  agyx rename <old> <new>              Rename a saved profile
   agyx remove <name>                   Delete a saved profile
   agyx shell-init                      Print the shell integration function
   agyx doctor                          Diagnose the installation
@@ -82,6 +83,36 @@ async function removeProfile(name: string): Promise<void> {
   await saveState(state);
 }
 
+async function renameProfile(oldNameInput: string, newNameInput: string): Promise<boolean> {
+  const oldName = validateProfileName(oldNameInput);
+  const newName = validateProfileName(newNameInput.trim());
+  if (oldName === newName) return false;
+
+  const state = await loadState();
+  const profile = state.profiles.find((entry) => entry.name === oldName);
+  if (!profile) throw new Error(`Profile not found: ${oldName}`);
+  if (state.profiles.some((entry) =>
+    entry !== profile
+    && (entry.name === newName || entry.previousNames?.includes(newName))
+  )) {
+    throw new Error(`Profile already exists: ${newName}`);
+  }
+
+  const credential = await keychain.readProfile(oldName);
+  await keychain.writeProfile(newName, credential);
+  const previousNames = new Set(profile.previousNames ?? []);
+  previousNames.delete(newName);
+  previousNames.add(oldName);
+  profile.previousNames = [...previousNames].sort();
+  profile.name = newName;
+  profile.updatedAt = new Date().toISOString();
+  if (state.activeProfile === oldName) state.activeProfile = newName;
+  state.profiles.sort((left, right) => left.name.localeCompare(right.name));
+  await saveState(state);
+  await keychain.deleteProfile(oldName);
+  return true;
+}
+
 async function confirmAndRemoveProfile(name: string): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Refusing to delete without an interactive confirmation.");
@@ -90,6 +121,18 @@ async function confirmAndRemoveProfile(name: string): Promise<boolean> {
   if (!confirmed) return false;
   await removeProfile(name);
   console.log(`Removed profile '${name}'.`);
+  return true;
+}
+
+async function promptAndRenameProfile(name: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Refusing to rename without an interactive terminal.");
+  }
+  const nextName = (await promptText(`Rename profile '${name}' to`, name)).trim();
+  if (!nextName || nextName === name) return false;
+  const renamed = await renameProfile(name, nextName);
+  if (!renamed) return false;
+  console.log(`Renamed profile '${name}' to '${nextName}'.`);
   return true;
 }
 
@@ -107,7 +150,11 @@ async function browseProfiles(mode: "list" | "use"): Promise<string | undefined>
     const action = await pickProfileAction(state, mode);
     if (action.type === "exit") return undefined;
     if (action.type === "select") return action.name;
-    await confirmAndRemoveProfile(action.name);
+    if (action.type === "delete") {
+      await confirmAndRemoveProfile(action.name);
+    } else if (action.type === "rename") {
+      await promptAndRenameProfile(action.name);
+    }
   }
 }
 
@@ -174,8 +221,12 @@ async function main(): Promise<number> {
       if (process.stdin.isTTY && process.stdout.isTTY) {
         while (true) {
           const action = await pickProfileAction(await loadState(), "list");
-          if (action.type !== "delete") break;
-          await confirmAndRemoveProfile(action.name);
+          if (action.type === "exit") break;
+          if (action.type === "delete") {
+            await confirmAndRemoveProfile(action.name);
+          } else if (action.type === "rename") {
+            await promptAndRenameProfile(action.name);
+          }
         }
       } else {
         printProfileTable(state);
@@ -206,6 +257,18 @@ async function main(): Promise<number> {
       const records = await sessionRecords();
       await resumeAll(records);
       console.log(`Resumed ${records.length} supervised session(s).`);
+      return 0;
+    }
+    case "rename": {
+      const oldName = args.shift();
+      const newName = args.shift();
+      if (!oldName || !newName || args.length) {
+        throw new Error("Usage: agyx rename <old> <new>");
+      }
+      const renamed = await renameProfile(oldName, newName);
+      console.log(renamed
+        ? `Renamed profile '${oldName}' to '${newName}'.`
+        : `Profile '${oldName}' is already named '${newName}'.`);
       return 0;
     }
     case "remove": {

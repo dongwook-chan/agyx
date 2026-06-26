@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 export interface ProfileRecord {
   name: string;
+  previousNames?: string[];
   email?: string;
   createdAt: string;
   updatedAt: string;
@@ -155,7 +156,9 @@ export function markProfileRequest(
   name: string,
   now = new Date(),
 ): void {
-  const profile = state.profiles.find((entry) => entry.name === name);
+  const profile = state.profiles.find((entry) =>
+    entry.name === name || entry.previousNames?.includes(name)
+  );
   if (!profile) return;
   const nowString = now.toISOString();
   profile.lastRequestAt = nowString;
@@ -173,7 +176,9 @@ export function markProfileQuotaExhausted(
   event: { reason: string; resetAt?: string },
   now = new Date(),
 ): void {
-  const profile = state.profiles.find((entry) => entry.name === name);
+  const profile = state.profiles.find((entry) =>
+    entry.name === name || entry.previousNames?.includes(name)
+  );
   if (!profile) return;
   const nowString = now.toISOString();
   profile.quotaStatus = "exhausted";
@@ -234,7 +239,9 @@ export function markProfileIneligible(
   event: { reason: string },
   now = new Date(),
 ): void {
-  const profile = state.profiles.find((entry) => entry.name === name);
+  const profile = state.profiles.find((entry) =>
+    entry.name === name || entry.previousNames?.includes(name)
+  );
   if (!profile) return;
   const nowString = now.toISOString();
   profile.eligibilityStatus = "ineligible";
@@ -295,7 +302,9 @@ export function profileNameFromEmail(email: string): string {
 
 export function uniqueProfileName(baseName: string, state: State): string {
   const base = validateProfileName(baseName);
-  const names = new Set(state.profiles.map((profile) => profile.name));
+  const names = new Set(
+    state.profiles.flatMap((profile) => [profile.name, ...(profile.previousNames ?? [])]),
+  );
   if (!names.has(base)) return base;
   for (let suffix = 2; suffix < 10000; suffix += 1) {
     const candidate = `${base}-${suffix}`;

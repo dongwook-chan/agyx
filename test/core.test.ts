@@ -5,10 +5,12 @@ import {
   markProfileActivated,
   markProfileCredentialMismatch,
   markProfileIneligible,
+  markProfileRequest,
   profileNameFromEmail,
   uniqueProfileName,
   validateProfileName,
 } from "../src/config.js";
+import type { State } from "../src/config.js";
 import { parseEligibilityEventLine } from "../src/eligibility.js";
 import { buildProfileViews } from "../src/profile_view.js";
 import { isRequestEventLine, parseQuotaEventLine } from "../src/quota.js";
@@ -118,13 +120,35 @@ test("derives safe unique profile names from email", () => {
         },
         {
           name: "dong-2",
+          previousNames: ["dong-3"],
           createdAt: "2026-06-26T00:00:00.000Z",
           updatedAt: "2026-06-26T00:00:00.000Z",
         },
       ],
     }),
-    "dong-3",
+    "dong-4",
   );
+});
+
+test("request events can target renamed profile aliases", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1 as const,
+    activeProfile: "work",
+    profiles: [
+      {
+        name: "work",
+        previousNames: ["dong"],
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    ],
+  };
+
+  markProfileRequest(state, "dong", now);
+
+  assert.equal(state.profiles[0]!.lastRequestAt, now.toISOString());
+  assert.equal(state.profiles[0]!.lastSuccessfulRequestAt, now.toISOString());
 });
 
 test("parses only agy executables", () => {

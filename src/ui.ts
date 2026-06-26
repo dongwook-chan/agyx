@@ -9,7 +9,7 @@ import {
   useState,
 } from "@inquirer/core";
 import { cursorHide } from "@inquirer/ansi";
-import { confirm } from "@inquirer/prompts";
+import { confirm, input } from "@inquirer/prompts";
 import Table from "cli-table3";
 import stringWidth from "string-width";
 import { color } from "./color.js";
@@ -130,6 +130,7 @@ export type ProfilePickerMode = "list" | "use";
 export type ProfilePickerAction =
   | { type: "select"; name: string }
   | { type: "delete"; name: string }
+  | { type: "rename"; name: string }
   | { type: "exit" };
 
 const profilePicker = createPrompt<ProfilePickerAction, {
@@ -160,6 +161,11 @@ const profilePicker = createPrompt<ProfilePickerAction, {
     if (keyName === "d" || keyName === "delete") {
       setStatus("done");
       done({ type: "delete", name: choice.value });
+      return;
+    }
+    if (keyName === "r") {
+      setStatus("done");
+      done({ type: "rename", name: choice.value });
       return;
     }
     if (isEnterKey(key)) {
@@ -208,8 +214,8 @@ const profilePicker = createPrompt<ProfilePickerAction, {
     ? choice.blockedDescription
     : choice.description;
   const help = config.mode === "use"
-    ? color.gray("↑↓ navigate • ⏎ select • d delete • q quit")
-    : color.gray("↑↓ navigate • d delete • q quit");
+    ? color.gray("↑↓ navigate • ⏎ select • r rename • d delete • q quit")
+    : color.gray("↑↓ navigate • r rename • d delete • q quit");
   const reservedDescription = description ?? " ";
   const title = config.mode === "list"
     ? config.message
@@ -309,6 +315,13 @@ export async function confirmAction(
   defaultValue: boolean,
 ): Promise<boolean> {
   return await confirm({ message, default: defaultValue });
+}
+
+export async function promptText(
+  message: string,
+  defaultValue?: string,
+): Promise<string> {
+  return await input({ message, default: defaultValue });
 }
 
 export async function selectProfileName(
