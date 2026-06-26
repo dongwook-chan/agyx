@@ -137,36 +137,37 @@ export async function selectProfileName(
     }
   })();
 
-  if (!rows.some((row) => row.selectable)) {
-    throw new Error(
-      "No selectable profiles. Run 'agyx list --verify' to inspect credential status.",
-    );
+  while (true) {
+    const selected = await select<string>({
+      message: suggested
+        ? `Select profile (default: next ${suggested})`
+        : "Select profile",
+      default: suggested,
+      choices: rows.map((row) => ({
+        value: row.profile.name,
+        name: [
+          colorCell(row, row.marker || " "),
+          colorCell(row, padStartWidth(row.number, widths.number)),
+          colorCell(row, padEndWidth(row.name, widths.name)),
+          colorStatus(row, padEndWidth(row.status, widths.status)),
+          colorCell(row, padEndWidth(row.quotaReset, widths.quotaReset)),
+          colorCell(row, padEndWidth(row.lastRequest, widths.lastRequest)),
+          colorCell(row, padEndWidth(row.activated, widths.activated)),
+          colorCell(row, padEndWidth(row.verified, widths.verified)),
+          colorCell(row, padStartWidth(row.switches, widths.switches)),
+          colorCell(row, row.expectedEmail),
+          row.actualEmail === "-" ? "" : colorCell(row, `actual=${row.actualEmail}`),
+        ].join("  "),
+        description: row.selectable
+          ? row.profile.name === suggested ? "next" : undefined
+          : row.disabledReason,
+      })),
+    });
+    const row = rows.find((entry) => entry.profile.name === selected);
+    if (row?.selectable) return selected;
+    console.error(color.red(
+      `Blocked: '${selected}' was not activated. ${row?.disabledReason ?? "Profile is not selectable."}`,
+    ));
+    console.error(color.gray("Choose another profile, or press Ctrl-C to exit."));
   }
-
-  return await select<string>({
-    message: suggested
-      ? `Select profile (default: next ${suggested})`
-      : "Select profile",
-    default: suggested,
-    choices: rows.map((row) => ({
-      value: row.profile.name,
-      name: [
-        colorCell(row, row.marker || " "),
-        colorCell(row, padStartWidth(row.number, widths.number)),
-        colorCell(row, padEndWidth(row.name, widths.name)),
-        colorStatus(row, padEndWidth(row.status, widths.status)),
-        colorCell(row, padEndWidth(row.quotaReset, widths.quotaReset)),
-        colorCell(row, padEndWidth(row.lastRequest, widths.lastRequest)),
-        colorCell(row, padEndWidth(row.activated, widths.activated)),
-        colorCell(row, padEndWidth(row.verified, widths.verified)),
-        colorCell(row, padStartWidth(row.switches, widths.switches)),
-        colorCell(row, row.expectedEmail),
-        row.actualEmail === "-" ? "" : colorCell(row, `actual=${row.actualEmail}`),
-      ].join("  "),
-      description: row.selectable
-        ? row.profile.name === suggested ? "next" : undefined
-        : row.disabledReason,
-      disabled: row.selectable ? false : row.disabledReason ?? true,
-    })),
-  });
 }
