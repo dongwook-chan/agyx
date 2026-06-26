@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/src/cli.js dist/src/shim.js",
     "clean": "rm -rf dist",
     "prepack": "npm run clean && npm run build",
     "test": "npm run clean && npm run build && node --test dist/test/*.test.js"
