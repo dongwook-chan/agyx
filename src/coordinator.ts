@@ -8,7 +8,6 @@ import {
   logDir,
   markProfileActivated,
   profileNameFromEmail,
-  readActiveGoogleAccountEmail,
   runtimeDir,
   saveState,
   upsertProfile,
@@ -119,7 +118,10 @@ export async function saveCurrent(
   const activeProfileEmail = state.profiles.find(
     (profile) => profile.name === state.activeProfile,
   )?.email;
-  const email = explicitEmail ?? await readActiveGoogleAccountEmail() ?? activeProfileEmail;
+  const probeLogPath = join(logDir, `email-probe-${Date.now()}.log`);
+  const email = explicitEmail
+    ?? await detectActiveEmail(probeLogPath)
+    ?? (nameInput ? activeProfileEmail : undefined);
   const name = resolveProfileName(state, nameInput, email, "save");
   const credential = await keychain.readActive();
   await keychain.writeProfile(name, credential);
@@ -153,6 +155,55 @@ export function detectEmail(content: string): string | undefined {
     /authenticated successfully as ([^\s]+@[^\s]+)/gi,
   )];
   return matches.at(-1)?.[1];
+}
+
+async function detectActiveEmail(logPath: string): Promise<string | undefined> {
+  const realAgy = await findRealAgy();
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(realAgy, ["--log-file", logPath], {
+      stdio: "ignore",
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        AGYX_EMAIL_PROBE: "1",
+      },
+    });
+    let settled = false;
+    let interval: NodeJS.Timeout;
+    let timeout: NodeJS.Timeout;
+    const finish = (email: string | undefined): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (child.exitCode === null) child.kill("SIGTERM");
+      resolvePromise(email);
+    };
+    interval = setInterval(async () => {
+      try {
+        const email = detectEmail(await readFile(logPath, "utf8"));
+        if (email) finish(email);
+      } catch {
+        // Wait for the log file and auth line.
+      }
+    }, 200);
+    timeout = setTimeout(() => finish(undefined), 7000);
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(interval);
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("exit", async () => {
+      if (settled) return;
+      try {
+        finish(detectEmail(await readFile(logPath, "utf8")));
+      } catch {
+        finish(undefined);
+      }
+    });
+  });
 }
 
 async function interactiveLogin(logPath: string): Promise<string | undefined> {
@@ -208,7 +259,7 @@ export async function loginProfile(
     const detectedEmail = await interactiveLogin(logPath);
     const credential = await keychain.readActive().catch(() => undefined);
     if (!credential) throw new Error("Login ended without creating an agy credential.");
-    const email = explicitEmail ?? detectedEmail ?? await readActiveGoogleAccountEmail();
+    const email = explicitEmail ?? detectedEmail;
     const name = resolveProfileName(await loadState(), nameInput, email, "login");
     await keychain.writeProfile(name, credential);
     await upsertProfile(name, email, true);

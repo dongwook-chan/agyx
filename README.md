@@ -59,10 +59,10 @@ agyx save
 agyx save personal
 ```
 
-When the name is omitted, `agyx save` reads the active Google account from
-`~/.gemini/google_accounts.json` and derives a profile name from the email
-local-part. Use `--email EMAIL` only when you want to override the detected
-metadata.
+When the name is omitted, `agyx save` briefly probes `agy` authentication,
+detects the actual keyring account email from the `agy` log, and derives a
+profile name from the email local-part. Use `--email EMAIL` only when you want
+to override the detected metadata.
 
 Add another account:
 
@@ -80,7 +80,7 @@ agyx login
 5. Restart every supervised session in its original terminal.
 
 When the name is omitted, `agyx login` derives it from the OAuth email detected
-in the `agy` log, falling back to `~/.gemini/google_accounts.json`.
+in the `agy` log.
 
 Use `--no-resume` to leave sessions paused after login.
 

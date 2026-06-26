@@ -38,7 +38,6 @@ export const configDir = process.env.AGYX_CONFIG_DIR
 export const runtimeDir = join(configDir, "run");
 export const logDir = join(configDir, "logs");
 export const statePath = join(configDir, "state.json");
-export const googleAccountsPath = join(homedir(), ".gemini", "google_accounts.json");
 
 export async function ensureDirectories(): Promise<void> {
   for (const directory of [configDir, runtimeDir, logDir]) {
@@ -206,20 +205,6 @@ export function uniqueProfileName(baseName: string, state: State): string {
     if (!names.has(candidate)) return candidate;
   }
   throw new Error(`Could not find an unused profile name for '${base}'.`);
-}
-
-export async function readActiveGoogleAccountEmail(): Promise<string | undefined> {
-  try {
-    const accounts = JSON.parse(await readFile(googleAccountsPath, "utf8")) as {
-      active?: unknown;
-    };
-    return typeof accounts.active === "string" && accounts.active.includes("@")
-      ? accounts.active
-      : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    return undefined;
-  }
 }
 
 export async function ensureParent(path: string): Promise<void> {
