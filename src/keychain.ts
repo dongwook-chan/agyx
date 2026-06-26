@@ -43,8 +43,8 @@ async function write(
   for (const application of trustedApplications) {
     args.push("-T", application);
   }
-  args.push("-w");
-  await run(security, args, { input: Buffer.concat([credential, Buffer.from("\n")]) });
+  args.push("-X", credential.toString("hex"));
+  await run(security, args);
 }
 
 export const keychain = {
