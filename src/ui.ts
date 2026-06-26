@@ -37,12 +37,6 @@ function colorCell(row: ProfileView, value: string): string {
   return color.gray(value);
 }
 
-function blockedReason(row: ProfileView): string {
-  return row.selectable || !row.disabledReason
-    ? ""
-    : color.yellow(`blocked: ${row.disabledReason}`);
-}
-
 function tableRow(row: ProfileView): string[] {
   return [
     colorCell(row, row.marker),
@@ -56,7 +50,6 @@ function tableRow(row: ProfileView): string[] {
     colorCell(row, row.activated),
     colorCell(row, row.verified),
     colorCell(row, row.switches),
-    blockedReason(row),
   ];
 }
 
@@ -79,7 +72,6 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
       "activated",
       "verified",
       "switches",
-      "note",
     ],
     colAligns: [
       "center",
@@ -93,7 +85,6 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
       "left",
       "left",
       "right",
-      "left",
     ],
     style: { head: [], border: [] },
     wordWrap: false,
@@ -141,13 +132,25 @@ export async function selectProfileName(
       return undefined;
     }
   })();
+  let currentDefault = suggested;
+  let blockedSelection: string | undefined;
+
+  function descriptionFor(row: ProfileView): string | undefined {
+    if (blockedSelection === row.profile.name) {
+      return color.red(
+        `Blocked: '${row.profile.name}' was not activated. ${row.disabledReason ?? "Profile is not selectable."}`,
+      );
+    }
+    if (!row.selectable && row.disabledReason) return color.yellow(row.disabledReason);
+    return undefined;
+  }
 
   while (true) {
     const selected = await select<string>({
-      message: suggested
-        ? `Select profile (default: next ${suggested})`
+      message: currentDefault
+        ? `Select profile (default: next ${currentDefault})`
         : "Select profile",
-      default: suggested,
+      default: currentDefault,
       choices: rows.map((row) => ({
         value: row.profile.name,
         name: [
@@ -162,18 +165,13 @@ export async function selectProfileName(
           colorCell(row, padStartWidth(row.switches, widths.switches)),
           colorCell(row, row.expectedEmail),
           row.actualEmail === "-" ? "" : colorCell(row, `actual=${row.actualEmail}`),
-          blockedReason(row),
         ].join("  "),
-        description: row.selectable && row.profile.name === suggested
-          ? "next"
-          : undefined,
+        description: descriptionFor(row),
       })),
     });
     const row = rows.find((entry) => entry.profile.name === selected);
     if (row?.selectable) return selected;
-    console.error(color.red(
-      `Blocked: '${selected}' was not activated. ${row?.disabledReason ?? "Profile is not selectable."}`,
-    ));
-    console.error(color.gray("Choose another profile, or press Ctrl-C to exit."));
+    blockedSelection = selected;
+    currentDefault = selected;
   }
 }
