@@ -113,8 +113,16 @@ interface ProfileChoice {
   selectable: boolean;
 }
 
-const profilePicker = createPrompt<string, {
+export type ProfilePickerMode = "list" | "use";
+
+export type ProfilePickerAction =
+  | { type: "select"; name: string }
+  | { type: "delete"; name: string }
+  | { type: "exit" };
+
+const profilePicker = createPrompt<ProfilePickerAction, {
   message: string;
+  mode: ProfilePickerMode;
   choices: ProfileChoice[];
   default?: string;
   pageSize?: number;
@@ -129,10 +137,26 @@ const profilePicker = createPrompt<string, {
   const choice = config.choices[active]!;
 
   useKeypress((key) => {
+    const keyName = key.name?.toLowerCase();
+    if (keyName === "q" || keyName === "escape") {
+      setStatus("done");
+      done({ type: "exit" });
+      return;
+    }
+    if (keyName === "d" || keyName === "delete") {
+      setStatus("done");
+      done({ type: "delete", name: choice.value });
+      return;
+    }
     if (isEnterKey(key)) {
+      if (config.mode === "list") {
+        setStatus("done");
+        done({ type: "exit" });
+        return;
+      }
       if (choice.selectable) {
         setStatus("done");
-        done(choice.value);
+        done({ type: "select", name: choice.value });
       } else {
         setBlockedValue(choice.value);
       }
@@ -154,13 +178,15 @@ const profilePicker = createPrompt<string, {
   });
 
   if (status === "done") {
-    return [prefix, config.message, choice.short].filter(Boolean).join(" ");
+    return [prefix, config.message].filter(Boolean).join(" ");
   }
 
   const description = blockedValue === choice.value
     ? choice.blockedDescription
     : choice.description;
-  const help = color.gray("↑↓ navigate • ⏎ select");
+  const help = config.mode === "use"
+    ? color.gray("↑↓ navigate • ⏎ select • d delete • q quit")
+    : color.gray("↑↓ navigate • d delete • q quit");
   return [
     [prefix, config.message].filter(Boolean).join(" "),
     page,
@@ -202,16 +228,10 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
   console.log(table.toString());
 }
 
-export async function confirmAction(
-  message: string,
-  defaultValue: boolean,
-): Promise<boolean> {
-  return await confirm({ message, default: defaultValue });
-}
-
-export async function selectProfileName(
+export async function pickProfileAction(
   state: Pick<State, "activeProfile" | "profiles">,
-): Promise<string> {
+  mode: ProfilePickerMode,
+): Promise<ProfilePickerAction> {
   if (!state.profiles.length) throw new Error("No saved profiles.");
 
   const rows = profileRows(state);
@@ -233,9 +253,13 @@ export async function selectProfileName(
       return undefined;
     }
   })();
+
   return await profilePicker({
-    message: suggested ? `Select profile (default: next ${suggested})` : "Select profile",
-    default: suggested,
+    mode,
+    message: mode === "use" && suggested
+      ? `Select profile (default: next ${suggested})`
+      : "Profiles",
+    default: mode === "use" ? suggested : state.activeProfile,
     choices: rows.map((row) => ({
       value: row.profile.name,
       name: profileLine(row, widths),
@@ -249,4 +273,19 @@ export async function selectProfileName(
       ),
     })),
   });
+}
+
+export async function confirmAction(
+  message: string,
+  defaultValue: boolean,
+): Promise<boolean> {
+  return await confirm({ message, default: defaultValue });
+}
+
+export async function selectProfileName(
+  state: Pick<State, "activeProfile" | "profiles">,
+): Promise<string> {
+  const action = await pickProfileAction(state, "use");
+  if (action.type === "select") return action.name;
+  throw new Error("No profile selected.");
 }

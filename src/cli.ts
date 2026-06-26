@@ -16,7 +16,7 @@ import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
 import { loadState, saveState, validateProfileName } from "./config.js";
 import { supervise } from "./session.js";
-import { printProfileTable, selectProfileName } from "./ui.js";
+import { confirmAction, pickProfileAction, printProfileTable } from "./ui.js";
 
 const help = `agyx — multi-account session supervisor for Antigravity CLI
 
@@ -58,12 +58,42 @@ function takeOptionalName(args: string[], usage: string): string | undefined {
   return args.shift();
 }
 
-async function pickProfile(): Promise<string> {
+async function removeProfile(name: string): Promise<void> {
+  validateProfileName(name);
+  await keychain.deleteProfile(name);
+  const state = await loadState();
+  state.profiles = state.profiles.filter((profile) => profile.name !== name);
+  if (state.activeProfile === name) state.activeProfile = undefined;
+  await saveState(state);
+}
+
+async function confirmAndRemoveProfile(name: string): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Refusing to delete without an interactive confirmation.");
+  }
+  const confirmed = await confirmAction(`Delete profile '${name}'?`, false);
+  if (!confirmed) return false;
+  await removeProfile(name);
+  console.log(`Removed profile '${name}'.`);
+  return true;
+}
+
+async function browseProfiles(mode: "list" | "use"): Promise<string | undefined> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (mode === "list") {
+      printProfileTable(await loadState());
+      return undefined;
+    }
     throw new Error("Usage: agyx use <name> or run 'agyx use' in an interactive terminal.");
   }
-  const state = await loadState();
-  return await selectProfileName(state);
+
+  while (true) {
+    const state = await loadState();
+    const action = await pickProfileAction(state, mode);
+    if (action.type === "exit") return undefined;
+    if (action.type === "select") return action.name;
+    await confirmAndRemoveProfile(action.name);
+  }
 }
 
 async function main(): Promise<number> {
@@ -111,7 +141,8 @@ async function main(): Promise<number> {
     case "use": {
       const name = args.shift();
       if (args.length) throw new Error("Usage: agyx use [name]");
-      const selected = name ?? await pickProfile();
+      const selected = name ?? await browseProfiles("use");
+      if (!selected) return 0;
       const result = await switchProfile(selected);
       console.log(
         `Activated profile '${result.name}'`
@@ -133,7 +164,15 @@ async function main(): Promise<number> {
       const verify = takeFlag(args, "--verify");
       if (args.length) throw new Error("Usage: agyx list [--verify]");
       const state = verify ? await verifyAllProfiles() : await loadState();
-      printProfileTable(state);
+      if (process.stdin.isTTY && process.stdout.isTTY) {
+        while (true) {
+          const action = await pickProfileAction(await loadState(), "list");
+          if (action.type !== "delete") break;
+          await confirmAndRemoveProfile(action.name);
+        }
+      } else {
+        printProfileTable(state);
+      }
       return 0;
     }
     case "current":
@@ -165,13 +204,7 @@ async function main(): Promise<number> {
     case "remove": {
       const name = args.shift();
       if (!name || args.length) throw new Error("Usage: agyx remove <name>");
-      validateProfileName(name);
-      await keychain.deleteProfile(name);
-      const state = await loadState();
-      state.profiles = state.profiles.filter((profile) => profile.name !== name);
-      if (state.activeProfile === name) state.activeProfile = undefined;
-      await saveState(state);
-      console.log(`Removed profile '${name}'.`);
+      await confirmAndRemoveProfile(name);
       return 0;
     }
     case "doctor": {
