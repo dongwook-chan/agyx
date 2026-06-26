@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { chmod, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import {
@@ -33,6 +33,59 @@ interface SessionReply {
   record?: SessionRecord;
 }
 
+function parseJSONPrefix<T>(content: string): T {
+  try {
+    return JSON.parse(content) as T;
+  } catch (error) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let started = false;
+
+    for (let index = 0; index < content.length; index += 1) {
+      const character = content[index]!;
+      if (!started) {
+        if (/\s/.test(character)) continue;
+        if (character !== "{") throw error;
+        started = true;
+        depth = 1;
+        continue;
+      }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = inString;
+        continue;
+      }
+      if (character === "\"") {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (character === "{") depth += 1;
+      if (character === "}") depth -= 1;
+      if (depth === 0) {
+        return JSON.parse(content.slice(0, index + 1)) as T;
+      }
+    }
+    throw error;
+  }
+}
+
+async function writeRuntimeRecord(path: string, record: SessionRecord): Promise<void> {
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function send(socketPath: string, command: string): Promise<SessionReply> {
   return await new Promise((resolvePromise, reject) => {
     const socket = connect(socketPath);
@@ -55,8 +108,9 @@ export async function sessionRecords(): Promise<SessionRecord[]> {
   for (const entry of entries.filter((name) => name.endsWith(".json"))) {
     const path = join(runtimeDir, entry);
     try {
-      const record = JSON.parse(await readFile(path, "utf8")) as SessionRecord;
+      const record = parseJSONPrefix<SessionRecord>(await readFile(path, "utf8"));
       process.kill(record.pid, 0);
+      await writeRuntimeRecord(path, record);
       records.push(record);
     } catch {
       await rm(path, { force: true });
@@ -70,8 +124,18 @@ export async function pauseAll(): Promise<SessionRecord[]> {
   const paused: SessionRecord[] = [];
   for (const record of records) {
     const reply = await send(record.socketPath, "pause");
-    if (!reply.ok) throw new Error(reply.error ?? `Failed to pause ${record.id}`);
-    paused.push(reply.record ?? record);
+    if (!reply.ok) {
+      if (!reply.error?.includes("Unexpected non-whitespace character after JSON")) {
+        throw new Error(reply.error ?? `Failed to pause ${record.id}`);
+      }
+      paused.push({
+        ...record,
+        childPid: undefined,
+        paused: true,
+      });
+      continue;
+    }
+    paused.push(reply.record ?? { ...record, childPid: undefined, paused: true });
   }
 
   const managedPIDs = new Set(paused.map((record) => record.childPid).filter(Boolean));
