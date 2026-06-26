@@ -21,7 +21,8 @@ source ~/.zshrc
 If you run an interactive `agyx` command before installing the shell
 integration, agyx asks once whether to configure `agy` as the transparent shell
 function. If GitHub CLI (`gh`) is installed, agyx also asks once whether to star
-the repository. Set `AGYX_NO_ONBOARDING=1` to suppress these prompts.
+the repository. Interactive prompts use Inquirer. Set `AGYX_NO_ONBOARDING=1` to
+suppress these prompts.
 
 The shell integration makes `agy` transparently run as:
 
@@ -87,8 +88,8 @@ agyx next
 agyx status
 ```
 
-`agyx use` without a profile opens an interactive picker. The picker and
-`agyx list` show profile metadata:
+`agyx use` without a profile opens an interactive picker. `agyx list` renders a
+terminal table. Both show profile metadata:
 
 - `status`: `ready`, `quota`, `disabled`, or `unknown`
 - `reset`: relative quota reset time when it can be inferred from logs

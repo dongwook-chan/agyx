@@ -44,5 +44,10 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.5.2",
+    "cli-table3": "^0.6.5",
+    "string-width": "^8.2.1"
   }
 }

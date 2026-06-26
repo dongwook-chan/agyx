@@ -1,21 +1,9 @@
-import { createInterface } from "node:readline/promises";
 import { loadState, saveState } from "./config.js";
 import { installShellIntegration, shellIntegrationInstalled } from "./install.js";
 import { run } from "./processes.js";
+import { confirmAction } from "./ui.js";
 
 const repository = "dongwook-chan/agyx";
-
-async function ask(question: string, defaultYes: boolean): Promise<boolean> {
-  const suffix = defaultYes ? " [Y/n] " : " [y/N] ";
-  const interface_ = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await interface_.question(`${question}${suffix}`)).trim().toLowerCase();
-    if (!answer) return defaultYes;
-    return ["y", "yes"].includes(answer);
-  } finally {
-    interface_.close();
-  }
-}
 
 async function ghInstalled(): Promise<boolean> {
   const result = await run(
@@ -38,7 +26,7 @@ async function promptShellIntegration(): Promise<void> {
   };
   await saveState(state);
 
-  if (!await ask("Install agy shell integration so `agy` runs through agyx?", true)) {
+  if (!await confirmAction("Install agy shell integration so `agy` runs through agyx?", true)) {
     console.log("Skipped shell integration. You can run it later with: agyx install");
     return;
   }
@@ -66,7 +54,7 @@ async function promptGithubStar(): Promise<void> {
   };
   await saveState(state);
 
-  if (!await ask(`Star ${repository} on GitHub with gh?`, false)) return;
+  if (!await confirmAction(`Star ${repository} on GitHub with gh?`, false)) return;
 
   try {
     await run("/usr/bin/env", [

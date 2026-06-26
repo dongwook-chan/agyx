@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createInterface } from "node:readline/promises";
 import {
   activateProfile,
   loginProfile,
@@ -13,9 +12,10 @@ import { installShellIntegration, shellInit } from "./install.js";
 import { keychain } from "./keychain.js";
 import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
-import { ProfileRecord, loadState, saveState, validateProfileName } from "./config.js";
-import { effectiveProfileStatus, selectNextProfile } from "./selection.js";
+import { loadState, saveState, validateProfileName } from "./config.js";
+import { selectNextProfile } from "./selection.js";
 import { supervise } from "./session.js";
+import { printProfileTable, selectProfileName } from "./ui.js";
 
 const help = `agyx — multi-account session supervisor for Antigravity CLI
 
@@ -57,114 +57,12 @@ function takeOptionalName(args: string[], usage: string): string | undefined {
   return args.shift();
 }
 
-function relativeTime(value: string | undefined, now = new Date()): string {
-  if (!value) return "-";
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) return "-";
-  const delta = timestamp - now.getTime();
-  const absolute = Math.abs(delta);
-  const units: Array<[number, string]> = [
-    [24 * 60 * 60 * 1000, "d"],
-    [60 * 60 * 1000, "h"],
-    [60 * 1000, "m"],
-    [1000, "s"],
-  ];
-  const [unitMs, suffix] = units.find(([ms]) => absolute >= ms) ?? units.at(-1)!;
-  const amount = Math.max(1, Math.round(absolute / unitMs));
-  return delta >= 0 ? `in ${amount}${suffix}` : `${amount}${suffix} ago`;
-}
-
-function profileStatusText(profile: ProfileRecord, now = new Date()): string {
-  const status = effectiveProfileStatus(profile, now);
-  if (status === "disabled") return "disabled";
-  if (status === "exhausted") return "quota";
-  return profile.quotaStatus === "available" ? "ready" : "unknown";
-}
-
-function profileRow(
-  index: number,
-  profile: ProfileRecord,
-  activeProfile: string | undefined,
-  widths: { number: number; name: number; email: number; status: number; reset: number; lastUsed: number; picks: number },
-  now = new Date(),
-): string {
-  const marker = profile.name === activeProfile ? "*" : " ";
-  const number = String(index + 1).padStart(widths.number);
-  const name = profile.name.padEnd(widths.name);
-  const email = (profile.email ?? "-").padEnd(widths.email);
-  const status = profileStatusText(profile, now).padEnd(widths.status);
-  const reset = relativeTime(profile.quotaResetAt, now).padEnd(widths.reset);
-  const lastUsed = relativeTime(profile.lastActivatedAt, now).padEnd(widths.lastUsed);
-  const picks = String(profile.selectionCount ?? 0).padStart(widths.picks);
-  return `${marker} ${number} ${name} ${email} ${status} ${reset} ${lastUsed} ${picks}`;
-}
-
-function printProfiles(profiles: ProfileRecord[], activeProfile?: string): void {
-  if (!profiles.length) {
-    console.log("No saved profiles.");
-    return;
-  }
-  const now = new Date();
-  const rows = profiles.map((profile, index) => ({
-    index,
-    profile,
-    status: profileStatusText(profile, now),
-    reset: relativeTime(profile.quotaResetAt, now),
-    lastUsed: relativeTime(profile.lastActivatedAt, now),
-    picks: String(profile.selectionCount ?? 0),
-  }));
-  const widths = {
-    number: Math.max("#".length, String(profiles.length).length),
-    name: Math.max("name".length, ...profiles.map((profile) => profile.name.length)),
-    email: Math.max("email".length, ...profiles.map((profile) => (profile.email ?? "-").length)),
-    status: Math.max("status".length, ...rows.map((row) => row.status.length)),
-    reset: Math.max("reset".length, ...rows.map((row) => row.reset.length)),
-    lastUsed: Math.max("last-used".length, ...rows.map((row) => row.lastUsed.length)),
-    picks: Math.max("picks".length, ...rows.map((row) => row.picks.length)),
-  };
-  console.log(
-    `  ${"#".padStart(widths.number)} `
-    + `${"name".padEnd(widths.name)} `
-    + `${"email".padEnd(widths.email)} `
-    + `${"status".padEnd(widths.status)} `
-    + `${"reset".padEnd(widths.reset)} `
-    + `${"last-used".padEnd(widths.lastUsed)} `
-    + `${"picks".padStart(widths.picks)}`,
-  );
-  for (const [index, profile] of profiles.entries()) {
-    console.log(profileRow(index, profile, activeProfile, widths, now));
-  }
-}
-
 async function pickProfile(): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Usage: agyx use <name> or run 'agyx use' in an interactive terminal.");
   }
   const state = await loadState();
-  if (!state.profiles.length) throw new Error("No saved profiles.");
-  printProfiles(state.profiles, state.activeProfile);
-  const suggested = (() => {
-    try { return selectNextProfile(state).name; }
-    catch { return undefined; }
-  })();
-  const prompt = suggested
-    ? `Select profile number/name [next: ${suggested}]: `
-    : "Select profile number/name: ";
-  const interface_ = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await interface_.question(prompt)).trim();
-    if (!answer && suggested) return suggested;
-    if (!answer) throw new Error("No profile selected.");
-    const index = Number(answer);
-    if (Number.isInteger(index) && index >= 1 && index <= state.profiles.length) {
-      return state.profiles[index - 1]!.name;
-    }
-    const profile = state.profiles.find(({ name }) => name === answer);
-    if (!profile) throw new Error(`Profile not found: ${answer}`);
-    return profile.name;
-  } finally {
-    interface_.close();
-  }
+  return await selectProfileName(state.profiles, state.activeProfile);
 }
 
 async function main(): Promise<number> {
@@ -223,7 +121,7 @@ async function main(): Promise<number> {
     }
     case "list": {
       const state = await loadState();
-      printProfiles(state.profiles, state.activeProfile);
+      printProfileTable(state.profiles, state.activeProfile);
       return 0;
     }
     case "current":
