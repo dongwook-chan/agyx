@@ -187,7 +187,9 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   });
 
   if (status === "done") {
-    return [prefix, config.message].filter(Boolean).join(" ");
+    return config.mode === "list"
+      ? config.message
+      : [prefix, config.message].filter(Boolean).join(" ");
   }
 
   const description = blockedValue === choice.value
@@ -197,9 +199,12 @@ const profilePicker = createPrompt<ProfilePickerAction, {
     ? color.gray("↑↓ navigate • ⏎ select • d delete • q quit")
     : color.gray("↑↓ navigate • d delete • q quit");
   const reservedDescription = description ?? " ";
+  const title = config.mode === "list"
+    ? config.message
+    : [prefix, config.message].filter(Boolean).join(" ");
   return [
-    [prefix, config.message].filter(Boolean).join(" "),
-    config.header,
+    title,
+    `  ${config.header}`,
     page,
     reservedDescription,
     help,
@@ -268,7 +273,7 @@ export async function pickProfileAction(
     mode,
     message: mode === "use" && suggested
       ? `Select profile (default: next ${suggested})`
-      : "Profiles",
+      : mode === "use" ? "Select profile" : "Saved profiles",
     header: profileHeaderLine(widths),
     default: mode === "use" ? suggested : state.activeProfile,
     choices: rows.map((row) => ({
