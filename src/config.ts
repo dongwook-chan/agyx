@@ -20,6 +20,9 @@ export interface ProfileRecord {
   credentialVerifiedAt?: string;
   credentialMismatchAt?: string;
   credentialError?: string;
+  eligibilityStatus?: "unknown" | "eligible" | "ineligible";
+  lastEligibilityErrorAt?: string;
+  eligibilityReason?: string;
   selectionCount?: number;
   disabled?: boolean;
   priority?: number;
@@ -89,6 +92,9 @@ export async function upsertProfile(
     existing.credentialVerifiedAt = email ? nowString : undefined;
     existing.credentialMismatchAt = undefined;
     existing.credentialError = undefined;
+    existing.eligibilityStatus = "unknown";
+    existing.lastEligibilityErrorAt = undefined;
+    existing.eligibilityReason = undefined;
     if (
       existing.quotaStatus === "exhausted"
       && existing.quotaResetAt
@@ -109,6 +115,7 @@ export async function upsertProfile(
       credentialStatus: email ? "verified" : "unknown",
       verifiedEmail: email,
       credentialVerifiedAt: email ? nowString : undefined,
+      eligibilityStatus: "unknown",
       selectionCount: 0,
     });
   }
@@ -152,8 +159,12 @@ export function markProfileRequest(
   if (!profile) return;
   const nowString = now.toISOString();
   profile.lastRequestAt = nowString;
+  profile.lastSuccessfulRequestAt = nowString;
   profile.updatedAt = nowString;
   if (profile.quotaStatus !== "exhausted") profile.quotaStatus = "available";
+  profile.eligibilityStatus = "eligible";
+  profile.eligibilityReason = undefined;
+  profile.lastEligibilityErrorAt = undefined;
 }
 
 export function markProfileQuotaExhausted(
@@ -210,6 +221,22 @@ export function markProfileCredentialMismatch(
   if (state.activeProfile === name) state.activeProfile = undefined;
 }
 
+export function markProfileIneligible(
+  state: State,
+  name: string,
+  event: { reason: string },
+  now = new Date(),
+): void {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) return;
+  const nowString = now.toISOString();
+  profile.eligibilityStatus = "ineligible";
+  profile.lastEligibilityErrorAt = nowString;
+  profile.eligibilityReason = event.reason;
+  profile.updatedAt = nowString;
+  if (state.activeProfile === name) state.activeProfile = undefined;
+}
+
 export async function recordProfileQuotaExhausted(
   name: string,
   event: { reason: string; resetAt?: string },
@@ -225,6 +252,15 @@ export async function recordProfileRequest(
 ): Promise<void> {
   const state = await loadState();
   markProfileRequest(state, name, now);
+  await saveState(state);
+}
+
+export async function recordProfileIneligible(
+  name: string,
+  event: { reason: string },
+): Promise<void> {
+  const state = await loadState();
+  markProfileIneligible(state, name, event);
   await saveState(state);
 }
 

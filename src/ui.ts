@@ -37,6 +37,7 @@ function colorStatus(row: ProfileView, value: string): string {
       return color.gray(value);
     case "mismatch":
     case "error":
+    case "ineligible":
       return color.gray(value);
     case "disabled":
       return color.gray(value);

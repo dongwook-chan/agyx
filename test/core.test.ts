@@ -3,10 +3,12 @@ import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
 import {
   markProfileActivated,
+  markProfileIneligible,
   profileNameFromEmail,
   uniqueProfileName,
   validateProfileName,
 } from "../src/config.js";
+import { parseEligibilityEventLine } from "../src/eligibility.js";
 import { buildProfileViews } from "../src/profile_view.js";
 import { isRequestEventLine, parseQuotaEventLine } from "../src/quota.js";
 import { selectNextProfile } from "../src/selection.js";
@@ -35,6 +37,34 @@ test("activation keeps exhausted quota until reset time", () => {
   markProfileActivated(state, "a", now, false);
   assert.equal(state.profiles[0]!.quotaStatus, "exhausted");
   assert.equal(state.profiles[0]!.quotaResetAt, "2026-06-27T00:00:00.000Z");
+});
+
+test("parses and blocks ineligible Antigravity accounts", () => {
+  const event = parseEligibilityEventLine(
+    "W server_oauth.go:99] Account ineligible: Your current account is not eligible for Antigravity. Verify your account to continue.",
+  );
+  assert.deepEqual(event, {
+    reason: "Your current account is not eligible for Antigravity. Verify your account to continue.",
+  });
+
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state = {
+    version: 1 as const,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "available" as const,
+      },
+    ],
+  };
+  markProfileIneligible(state, "a", event!, now);
+  const views = buildProfileViews(state, now);
+  assert.equal(state.activeProfile, undefined);
+  assert.equal(views[0]!.status, "ineligible");
+  assert.equal(views[0]!.selectable, false);
 });
 
 test("validates profile names", () => {

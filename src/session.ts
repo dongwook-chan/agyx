@@ -7,6 +7,7 @@ import {
   ensureDirectories,
   loadState,
   logDir,
+  recordProfileIneligible,
   recordProfileQuotaExhausted,
   recordProfileRequest,
   runtimeDir,
@@ -16,6 +17,7 @@ import {
   isRestartable,
   withConversation,
 } from "./processes.js";
+import { parseEligibilityEventLine } from "./eligibility.js";
 import { isRequestEventLine, parseQuotaEventLine } from "./quota.js";
 
 export interface SessionRecord {
@@ -119,6 +121,10 @@ export async function supervise(args: string[]): Promise<number> {
       for (const line of appended.split(/\r?\n/)) {
         if (isRequestEventLine(line)) {
           await recordProfileRequest(profileName);
+        }
+        const eligibilityEvent = parseEligibilityEventLine(line);
+        if (eligibilityEvent) {
+          await recordProfileIneligible(profileName, eligibilityEvent);
         }
         const event = parseQuotaEventLine(line);
         if (!event) continue;

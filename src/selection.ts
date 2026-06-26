@@ -5,7 +5,8 @@ export type ProfileRuntimeStatus =
   | "exhausted"
   | "disabled"
   | "mismatch"
-  | "error";
+  | "error"
+  | "ineligible";
 
 export function effectiveProfileStatus(
   profile: ProfileRecord,
@@ -14,6 +15,7 @@ export function effectiveProfileStatus(
   if (profile.disabled) return "disabled";
   if (profile.credentialStatus === "mismatch") return "mismatch";
   if (profile.credentialStatus === "error") return "error";
+  if (profile.eligibilityStatus === "ineligible") return "ineligible";
   if (profile.quotaStatus !== "exhausted") return "ready";
   if (!profile.quotaResetAt) return "exhausted";
   return Date.parse(profile.quotaResetAt) > now.getTime()
@@ -52,8 +54,13 @@ export function selectNextProfile(
     .filter((profile) =>
       profile.credentialStatus === "mismatch"
       || profile.credentialStatus === "error"
+      || profile.eligibilityStatus === "ineligible"
     )
-    .map((profile) => `${profile.name}:${profile.credentialStatus}`)
+    .map((profile) =>
+      profile.eligibilityStatus === "ineligible"
+        ? `${profile.name}:ineligible`
+        : `${profile.name}:${profile.credentialStatus}`
+    )
     .join(", ");
   const resetText = earliestReset
     ? ` Earliest reset: ${earliestReset.name} at ${earliestReset.quotaResetAt}.`

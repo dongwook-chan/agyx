@@ -41,6 +41,7 @@ export function profileStatusText(profile: ProfileRecord, now = new Date()): str
   if (status === "disabled") return "disabled";
   if (status === "mismatch") return "mismatch";
   if (status === "error") return "auth-error";
+  if (status === "ineligible") return "ineligible";
   if (status === "exhausted") return "quota";
   return profile.quotaStatus === "available" ? "ready" : "unknown";
 }
@@ -59,6 +60,10 @@ export function buildProfileViews(
       }
       if (runtimeStatus === "error") {
         return profile.credentialError ?? "credential could not be verified";
+      }
+      if (runtimeStatus === "ineligible") {
+        return profile.eligibilityReason
+          ?? "account is not eligible for Antigravity; verify it in the browser or login another account";
       }
       if (runtimeStatus === "exhausted") {
         return profile.quotaResetAt
