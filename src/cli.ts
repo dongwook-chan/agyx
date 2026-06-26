@@ -39,6 +39,21 @@ Usage:
 All arguments passed through "agy" are forwarded to the real agy executable.
 Non-interactive --print/--prompt commands are not automatically restarted.`;
 
+function printSwitchResult(result: { name: string; email?: string; alreadyActive?: boolean }): void {
+  if (result.alreadyActive) {
+    console.log(
+      `Profile '${result.name}' is already active.`
+      + (result.email ? ` (${result.email})` : ""),
+    );
+    return;
+  }
+  console.log(
+    `Activated profile '${result.name}'`
+    + (result.email ? ` (${result.email})` : "")
+    + " and resumed all sessions.",
+  );
+}
+
 function takeOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index < 0) return undefined;
@@ -144,20 +159,12 @@ async function main(): Promise<number> {
       const selected = name ?? await browseProfiles("use");
       if (!selected) return 0;
       const result = await switchProfile(selected);
-      console.log(
-        `Activated profile '${result.name}'`
-        + (result.email ? ` (${result.email})` : "")
-        + " and resumed all sessions.",
-      );
+      printSwitchResult(result);
       return 0;
     }
     case "next": {
       const result = await switchToNextProfile();
-      console.log(
-        `Activated profile '${result.name}'`
-        + (result.email ? ` (${result.email})` : "")
-        + " and resumed all sessions.",
-      );
+      printSwitchResult(result);
       return 0;
     }
     case "list": {

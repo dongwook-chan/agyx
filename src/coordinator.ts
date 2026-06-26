@@ -163,6 +163,7 @@ export interface ProfileCaptureResult {
 export interface ProfileSwitchResult {
   name: string;
   email?: string;
+  alreadyActive?: boolean;
 }
 
 function resolveProfileName(
@@ -259,6 +260,13 @@ export async function switchProfile(name: string): Promise<ProfileSwitchResult> 
   const initialState = await loadState();
   const profile = initialState.profiles.find((entry) => entry.name === name);
   if (!profile) throw new Error(`Profile not found: ${name}`);
+  if (initialState.activeProfile === name) {
+    return {
+      name,
+      email: profile.email ?? profile.verifiedEmail,
+      alreadyActive: true,
+    };
+  }
   const status = effectiveProfileStatus(profile);
   if (status !== "ready") {
     throw new Error(`Profile '${name}' is not selectable: ${status}.`);
@@ -276,17 +284,34 @@ export async function switchProfile(name: string): Promise<ProfileSwitchResult> 
 }
 
 export async function switchToNextProfile(): Promise<ProfileSwitchResult> {
+  const initialState = await loadState();
+  const initialCandidate = selectNextProfile(initialState);
+  if (initialCandidate.name === initialState.activeProfile) {
+    return {
+      name: initialCandidate.name,
+      email: initialCandidate.email ?? initialCandidate.verifiedEmail,
+      alreadyActive: true,
+    };
+  }
   const sessions = await pauseAll();
   const previousCredential = await keychain.readActive().catch(() => undefined);
   let lastError: Error | undefined;
   try {
     for (let attempt = 0; attempt < 10000; attempt += 1) {
-      const candidate = selectNextProfile(await loadState()).name;
+      const state = await loadState();
+      const candidate = selectNextProfile(state);
+      if (candidate.name === state.activeProfile) {
+        return {
+          name: candidate.name,
+          email: candidate.email ?? candidate.verifiedEmail,
+          alreadyActive: true,
+        };
+      }
       try {
-        return await activateProfile(candidate, { verify: true });
+        return await activateProfile(candidate.name, { verify: true });
       } catch (error) {
         lastError = error as Error;
-        const profile = (await loadState()).profiles.find((entry) => entry.name === candidate);
+        const profile = (await loadState()).profiles.find((entry) => entry.name === candidate.name);
         if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
           throw error;
         }
