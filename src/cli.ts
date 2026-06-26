@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createInterface } from "node:readline/promises";
 import {
   activateProfile,
   loginProfile,
@@ -11,7 +12,8 @@ import {
 import { installShellIntegration, shellInit } from "./install.js";
 import { keychain } from "./keychain.js";
 import { findRealAgy } from "./processes.js";
-import { loadState, saveState, validateProfileName } from "./config.js";
+import { ProfileRecord, loadState, saveState, validateProfileName } from "./config.js";
+import { effectiveProfileStatus, selectNextProfile } from "./selection.js";
 import { supervise } from "./session.js";
 
 const help = `agyx — multi-account session supervisor for Antigravity CLI
@@ -21,8 +23,8 @@ Usage:
   agyx session -- [agy options]        Run agy under a restartable supervisor
   agyx save <name> [--email EMAIL]     Save the current Keychain account
   agyx login <name> [--no-resume]      Pause all sessions and add an account
-  agyx use <name>                      Switch account and resume every session
-  agyx next                            Rotate to the next saved account
+  agyx use [name]                      Switch account and resume every session
+  agyx next                            Rotate to the next selectable account
   agyx list                            List profiles
   agyx current                         Print the active profile
   agyx status                          List supervised terminal sessions
@@ -39,6 +41,90 @@ function takeOption(args: string[], name: string): string | undefined {
   if (index < 0) return undefined;
   if (!args[index + 1]) throw new Error(`${name} requires a value`);
   return args.splice(index, 2)[1];
+}
+
+function relativeTime(value: string | undefined, now = new Date()): string {
+  if (!value) return "-";
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "-";
+  const delta = timestamp - now.getTime();
+  const absolute = Math.abs(delta);
+  const units: Array<[number, string]> = [
+    [24 * 60 * 60 * 1000, "d"],
+    [60 * 60 * 1000, "h"],
+    [60 * 1000, "m"],
+    [1000, "s"],
+  ];
+  const [unitMs, suffix] = units.find(([ms]) => absolute >= ms) ?? units.at(-1)!;
+  const amount = Math.max(1, Math.round(absolute / unitMs));
+  return delta >= 0 ? `in ${amount}${suffix}` : `${amount}${suffix} ago`;
+}
+
+function profileStatusText(profile: ProfileRecord, now = new Date()): string {
+  const status = effectiveProfileStatus(profile, now);
+  if (status === "disabled") return "disabled";
+  if (status === "exhausted") return "quota";
+  return profile.quotaStatus === "available" ? "ready" : "unknown";
+}
+
+function profileRow(
+  index: number,
+  profile: ProfileRecord,
+  activeProfile: string | undefined,
+  now = new Date(),
+): string {
+  const marker = profile.name === activeProfile ? "*" : " ";
+  const number = String(index + 1).padStart(2);
+  const name = profile.name.padEnd(18);
+  const email = (profile.email ?? "-").padEnd(28);
+  const status = profileStatusText(profile, now).padEnd(8);
+  const reset = relativeTime(profile.quotaResetAt, now).padEnd(8);
+  const lastUsed = relativeTime(profile.lastActivatedAt, now).padEnd(9);
+  const picks = String(profile.selectionCount ?? 0).padStart(5);
+  return `${marker} ${number} ${name} ${email} ${status} ${reset} ${lastUsed} ${picks}`;
+}
+
+function printProfiles(profiles: ProfileRecord[], activeProfile?: string): void {
+  if (!profiles.length) {
+    console.log("No saved profiles.");
+    return;
+  }
+  const now = new Date();
+  console.log("    # name               email                        status   reset    last-used picks");
+  for (const [index, profile] of profiles.entries()) {
+    console.log(profileRow(index, profile, activeProfile, now));
+  }
+}
+
+async function pickProfile(): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Usage: agyx use <name> or run 'agyx use' in an interactive terminal.");
+  }
+  const state = await loadState();
+  if (!state.profiles.length) throw new Error("No saved profiles.");
+  printProfiles(state.profiles, state.activeProfile);
+  const suggested = (() => {
+    try { return selectNextProfile(state).name; }
+    catch { return undefined; }
+  })();
+  const prompt = suggested
+    ? `Select profile number/name [next: ${suggested}]: `
+    : "Select profile number/name: ";
+  const interface_ = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await interface_.question(prompt)).trim();
+    if (!answer && suggested) return suggested;
+    if (!answer) throw new Error("No profile selected.");
+    const index = Number(answer);
+    if (Number.isInteger(index) && index >= 1 && index <= state.profiles.length) {
+      return state.profiles[index - 1]!.name;
+    }
+    const profile = state.profiles.find(({ name }) => name === answer);
+    if (!profile) throw new Error(`Profile not found: ${answer}`);
+    return profile.name;
+  } finally {
+    interface_.close();
+  }
 }
 
 async function main(): Promise<number> {
@@ -83,31 +169,22 @@ async function main(): Promise<number> {
     }
     case "use": {
       const name = args.shift();
-      if (!name || args.length) throw new Error("Usage: agyx use <name>");
-      await switchProfile(name);
-      console.log(`Activated profile '${name}' and resumed all sessions.`);
+      if (args.length) throw new Error("Usage: agyx use [name]");
+      const selected = name ?? await pickProfile();
+      await switchProfile(selected);
+      console.log(`Activated profile '${selected}' and resumed all sessions.`);
       return 0;
     }
     case "next": {
       const state = await loadState();
-      if (!state.profiles.length) throw new Error("No saved profiles.");
-      const index = state.activeProfile
-        ? state.profiles.findIndex(({ name }) => name === state.activeProfile)
-        : -1;
-      const name = state.profiles[(index + 1) % state.profiles.length]!.name;
+      const name = selectNextProfile(state).name;
       await switchProfile(name);
       console.log(`Activated profile '${name}' and resumed all sessions.`);
       return 0;
     }
     case "list": {
       const state = await loadState();
-      if (!state.profiles.length) console.log("No saved profiles.");
-      for (const profile of state.profiles) {
-        console.log(
-          `${profile.name === state.activeProfile ? "*" : " "} ${profile.name}`
-          + (profile.email ? `  ${profile.email}` : ""),
-        );
-      }
+      printProfiles(state.profiles, state.activeProfile);
       return 0;
     }
     case "current":

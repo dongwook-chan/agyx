@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
 import { validateProfileName } from "../src/config.js";
+import { parseQuotaEventLine } from "../src/quota.js";
+import { selectNextProfile } from "../src/selection.js";
 import {
   isRestartable,
   parsePS,
@@ -66,4 +68,48 @@ test("detects latest email and conversation", () => {
     `),
     "22222222-2222-2222-2222-222222222222",
   );
+});
+
+test("selects the next non-exhausted profile in round-robin order", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  assert.equal(
+    selectNextProfile({
+      version: 1,
+      activeProfile: "a",
+      profiles: [
+        {
+          name: "a",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          quotaStatus: "available",
+        },
+        {
+          name: "b",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          quotaStatus: "exhausted",
+          quotaResetAt: "2026-06-27T00:00:00.000Z",
+        },
+        {
+          name: "c",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          quotaStatus: "available",
+        },
+      ],
+    }, now).name,
+    "c",
+  );
+});
+
+test("parses quota reset hints from agy logs", () => {
+  const event = parseQuotaEventLine(
+    "RESOURCE_EXHAUSTED: Individual quota reached. Resets in 1h30m10s",
+    new Date("2026-06-26T00:00:00.000Z"),
+  );
+  assert.deepEqual(event, {
+    reason: "individual quota reached",
+    resetAt: "2026-06-26T01:30:10.000Z",
+  });
+  assert.equal(parseQuotaEventLine("normal log line"), undefined);
 });

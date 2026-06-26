@@ -6,6 +6,7 @@ import {
   ensureDirectories,
   loadState,
   logDir,
+  markProfileActivated,
   runtimeDir,
   saveState,
   upsertProfile,
@@ -98,7 +99,7 @@ export async function activateProfile(nameInput: string): Promise<void> {
   }
   const credential = await keychain.readProfile(name);
   await keychain.writeActive(credential);
-  state.activeProfile = name;
+  markProfileActivated(state, name);
   await saveState(state);
 }
 

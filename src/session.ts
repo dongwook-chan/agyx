@@ -5,7 +5,9 @@ import { join } from "node:path";
 import {
   cleanupRuntimeFile,
   ensureDirectories,
+  loadState,
   logDir,
+  recordProfileQuotaExhausted,
   runtimeDir,
 } from "./config.js";
 import {
@@ -13,6 +15,7 @@ import {
   isRestartable,
   withConversation,
 } from "./processes.js";
+import { parseQuotaEventLine } from "./quota.js";
 
 export interface SessionRecord {
   id: string;
@@ -70,6 +73,10 @@ export async function supervise(args: string[]): Promise<number> {
   let intentionalStop = false;
   let conversationId: string | undefined;
   let finalCode = 0;
+  let logOffset = 0;
+  let scanningQuota = false;
+  let profileAtStart: string | undefined;
+  let quotaInterval: NodeJS.Timeout | undefined;
 
   const persist = async (): Promise<void> => {
     const record: SessionRecord = {
@@ -97,9 +104,37 @@ export async function supervise(args: string[]): Promise<number> {
     }
   };
 
+  const scanQuotaEvents = async (): Promise<void> => {
+    if (scanningQuota) return;
+    scanningQuota = true;
+    try {
+      const profileName = profileAtStart;
+      if (!profileName) return;
+      const content = await readFile(logPath, "utf8");
+      if (content.length < logOffset) logOffset = 0;
+      const appended = content.slice(logOffset);
+      logOffset = content.length;
+      for (const line of appended.split(/\r?\n/)) {
+        const event = parseQuotaEventLine(line);
+        if (!event) continue;
+        await recordProfileQuotaExhausted(profileName, event);
+        console.error(
+          `agyx: marked profile '${profileName}' as quota exhausted`
+          + (event.resetAt ? ` until ${event.resetAt}` : "")
+          + ". Run 'agyx next' to switch.",
+        );
+      }
+    } catch {
+      // The log or state file may not exist yet.
+    } finally {
+      scanningQuota = false;
+    }
+  };
+
   const startChild = async (): Promise<void> => {
     intentionalStop = false;
     paused = false;
+    profileAtStart = (await loadState()).activeProfile;
     const launchArgs = withConversation(args, conversationId);
     if (!launchArgs.some((argument) =>
       argument === "--log-file" || argument.startsWith("--log-file=")
@@ -119,6 +154,7 @@ export async function supervise(args: string[]): Promise<number> {
     child.on("exit", async (code, signal) => {
       finalCode = code ?? (signal ? 128 : 1);
       await refreshConversation();
+      await scanQuotaEvents();
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
@@ -179,6 +215,7 @@ export async function supervise(args: string[]): Promise<number> {
   });
 
   const shutdown = async (): Promise<void> => {
+    if (quotaInterval) clearInterval(quotaInterval);
     await cleanupRuntimeFile(socketPath);
     await cleanupRuntimeFile(recordPath);
     server.close();
@@ -200,5 +237,9 @@ export async function supervise(args: string[]): Promise<number> {
     process.exit(143);
   });
   await startChild();
+  quotaInterval = setInterval(() => {
+    void scanQuotaEvents();
+  }, 750);
+  quotaInterval.unref();
   return await new Promise<number>(() => undefined);
 }

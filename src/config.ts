@@ -7,6 +7,16 @@ export interface ProfileRecord {
   email?: string;
   createdAt: string;
   updatedAt: string;
+  authenticatedAt?: string;
+  lastActivatedAt?: string;
+  lastSuccessfulRequestAt?: string;
+  lastQuotaErrorAt?: string;
+  quotaResetAt?: string;
+  quotaStatus?: "unknown" | "available" | "exhausted";
+  lastQuotaReason?: string;
+  selectionCount?: number;
+  disabled?: boolean;
+  priority?: number;
 }
 
 export interface State {
@@ -54,16 +64,79 @@ export async function upsertProfile(
   makeActive: boolean,
 ): Promise<void> {
   const state = await loadState();
-  const now = new Date().toISOString();
+  const now = new Date();
+  const nowString = now.toISOString();
   const existing = state.profiles.find((profile) => profile.name === name);
   if (existing) {
     existing.email = email ?? existing.email;
-    existing.updatedAt = now;
+    existing.authenticatedAt = nowString;
+    existing.updatedAt = nowString;
+    if (existing.quotaStatus === "exhausted") {
+      existing.quotaStatus = "available";
+      existing.quotaResetAt = undefined;
+      existing.lastQuotaReason = undefined;
+    }
   } else {
-    state.profiles.push({ name, email, createdAt: now, updatedAt: now });
+    state.profiles.push({
+      name,
+      email,
+      createdAt: nowString,
+      updatedAt: nowString,
+      authenticatedAt: nowString,
+      quotaStatus: "available",
+      selectionCount: 0,
+    });
   }
   state.profiles.sort((left, right) => left.name.localeCompare(right.name));
-  if (makeActive) state.activeProfile = name;
+  if (makeActive) markProfileActivated(state, name, now);
+  await saveState(state);
+}
+
+export function markProfileActivated(
+  state: State,
+  name: string,
+  now = new Date(),
+): void {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) throw new Error(`Profile not found: ${name}`);
+  const nowString = now.toISOString();
+  state.activeProfile = name;
+  profile.lastActivatedAt = nowString;
+  profile.updatedAt = nowString;
+  profile.selectionCount = (profile.selectionCount ?? 0) + 1;
+  if (
+    profile.quotaStatus === "exhausted"
+    && profile.quotaResetAt
+    && Date.parse(profile.quotaResetAt) <= now.getTime()
+  ) {
+    profile.quotaStatus = "available";
+    profile.quotaResetAt = undefined;
+    profile.lastQuotaReason = undefined;
+  }
+}
+
+export function markProfileQuotaExhausted(
+  state: State,
+  name: string,
+  event: { reason: string; resetAt?: string },
+  now = new Date(),
+): void {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) return;
+  const nowString = now.toISOString();
+  profile.quotaStatus = "exhausted";
+  profile.lastQuotaErrorAt = nowString;
+  profile.lastQuotaReason = event.reason;
+  profile.quotaResetAt = event.resetAt;
+  profile.updatedAt = nowString;
+}
+
+export async function recordProfileQuotaExhausted(
+  name: string,
+  event: { reason: string; resetAt?: string },
+): Promise<void> {
+  const state = await loadState();
+  markProfileQuotaExhausted(state, name, event);
   await saveState(state);
 }
 

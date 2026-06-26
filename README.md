@@ -67,9 +67,23 @@ Use `--no-resume` to leave sessions paused after login.
 ```bash
 agyx list
 agyx use work
+agyx use
 agyx next
 agyx status
 ```
+
+`agyx use` without a profile opens an interactive picker. The picker and
+`agyx list` show profile metadata:
+
+- `status`: `ready`, `quota`, `disabled`, or `unknown`
+- `reset`: relative quota reset time when it can be inferred from logs
+- `last-used`: when the profile was last activated through agyx
+- `picks`: how many times agyx selected the profile
+
+`agyx next` uses name-sorted round-robin order, starting after the currently
+active profile. It skips profiles marked `disabled` or currently quota
+exhausted. If a quota reset time has passed, the profile becomes selectable
+again.
 
 Each supervisor preserves its working directory and original arguments. It also
 extracts the active conversation UUID from the session log and uses
@@ -77,6 +91,18 @@ extracts the active conversation UUID from the session log and uses
 
 Conversation names are supported by `agy` through `/rename` and `/resume`, but
 `agyx` tracks UUIDs because names can be changed or duplicated.
+
+## Quota detection
+
+`agyx` passively scans supervised `agy` session logs for common quota/rate-limit
+signals such as `RESOURCE_EXHAUSTED`, HTTP `429`, and `Individual quota
+reached`. When a reset hint such as `Resets in 73h16m27s` is present, agyx stores
+the inferred reset time in profile metadata.
+
+This release records quota state and makes `agyx next` avoid exhausted profiles.
+It does not yet perform an automatic global account switch from inside a running
+session; use `agyx next` after a quota message so the switch still happens
+through the normal pause/switch/resume transaction.
 
 ## Security
 
