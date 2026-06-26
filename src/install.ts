@@ -32,14 +32,16 @@ export async function installShellIntegration(): Promise<string> {
   const rcPath = shellIntegrationPath();
   await ensureParent(rcPath);
   let content = "";
+  let existing = true;
   try { content = await readFile(rcPath, "utf8"); }
-  catch { /* New shell rc file. */ }
+  catch { existing = false; }
   const block = `${startMarker}\n${shellInit()}\n${endMarker}`;
   const pattern = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`, "m");
+  const trimmed = content.trimEnd();
   content = pattern.test(content)
     ? content.replace(pattern, block)
-    : `${content.trimEnd()}\n\n${block}\n`;
+    : `${trimmed ? `${trimmed}\n\n` : ""}${block}\n`;
   await writeFile(rcPath, content, { mode: 0o600 });
-  await chmod(rcPath, 0o600);
+  if (!existing) await chmod(rcPath, 0o600);
   return rcPath;
 }
