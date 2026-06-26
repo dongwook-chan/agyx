@@ -1,6 +1,6 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { createServer, Socket } from "node:net";
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   cleanupRuntimeFile,
@@ -71,6 +71,7 @@ export async function supervise(args: string[]): Promise<number> {
   const recordPath = join(runtimeDir, `${id}.json`);
   const logPath = join(logDir, `session-${id}.log`);
   const realAgy = await findRealAgy();
+  const startedAt = new Date().toISOString();
   let child: ChildProcess | undefined;
   let paused = false;
   let intentionalStop = false;
@@ -81,22 +82,34 @@ export async function supervise(args: string[]): Promise<number> {
   let profileAtStart: string | undefined;
   let quotaMarked = false;
   let quotaInterval: NodeJS.Timeout | undefined;
+  let persistCount = 0;
 
-  const persist = async (): Promise<void> => {
-    const record: SessionRecord = {
-      id,
-      pid: process.pid,
-      childPid: child?.pid,
-      cwd: process.cwd(),
-      args,
-      conversationId,
-      socketPath,
-      logPath,
-      paused,
-      restartable: true,
-      startedAt: new Date().toISOString(),
-    };
-    await writeFile(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  const currentRecord = (): SessionRecord => ({
+    id,
+    pid: process.pid,
+    childPid: child?.pid,
+    cwd: process.cwd(),
+    args,
+    conversationId,
+    socketPath,
+    logPath,
+    paused,
+    restartable: true,
+    startedAt,
+  });
+
+  const persist = async (): Promise<SessionRecord> => {
+    const record = currentRecord();
+    const temporary = `${recordPath}.${process.pid}.${persistCount++}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, recordPath);
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    return record;
   };
 
   const refreshConversation = async (): Promise<void> => {
@@ -202,8 +215,8 @@ export async function supervise(args: string[]): Promise<number> {
         if (request.command === "pause") {
           paused = true;
           await stopChild();
-          await persist();
-          writeJSON(socket, { ok: true, record: JSON.parse(await readFile(recordPath, "utf8")) });
+          const record = await persist();
+          writeJSON(socket, { ok: true, record });
         } else if (request.command === "resume") {
           if (!child) await startChild();
           writeJSON(socket, { ok: true });
@@ -214,8 +227,8 @@ export async function supervise(args: string[]): Promise<number> {
           process.exit(0);
         } else {
           await refreshConversation();
-          await persist();
-          writeJSON(socket, { ok: true, record: JSON.parse(await readFile(recordPath, "utf8")) });
+          const record = await persist();
+          writeJSON(socket, { ok: true, record });
         }
       } catch (error) {
         writeJSON(socket, { ok: false, error: (error as Error).message });
