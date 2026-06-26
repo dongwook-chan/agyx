@@ -92,9 +92,10 @@ agyx status
 terminal table. Both show profile metadata:
 
 - `status`: `ready`, `quota`, `disabled`, or `unknown`
-- `reset`: relative quota reset time when it can be inferred from logs
-- `last-used`: when the profile was last activated through agyx
-- `picks`: how many times agyx selected the profile
+- `quota-reset`: relative quota reset time when it can be inferred from logs
+- `last-request`: when a supervised `agy` log last showed a model request
+- `activated`: when agyx last made the profile active
+- `switches`: how many times agyx selected the profile through login/use/next
 
 `agyx next` uses name-sorted round-robin order, starting after the currently
 active profile. It skips profiles marked `disabled` or currently quota
@@ -115,10 +116,10 @@ signals such as `RESOURCE_EXHAUSTED`, HTTP `429`, and `Individual quota
 reached`. When a reset hint such as `Resets in 73h16m27s` is present, agyx stores
 the inferred reset time in profile metadata.
 
-This release records quota state and makes `agyx next` avoid exhausted profiles.
-It does not yet perform an automatic global account switch from inside a running
-session; use `agyx next` after a quota message so the switch still happens
-through the normal pause/switch/resume transaction.
+This release records quota state, request attempts, and makes `agyx next` avoid
+exhausted profiles. It does not yet perform an automatic global account switch
+from inside a running session; use `agyx next` after a quota message so the
+switch still happens through the normal pause/switch/resume transaction.
 
 ## Security
 

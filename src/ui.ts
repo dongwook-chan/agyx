@@ -43,9 +43,10 @@ function profileRows(profiles: ProfileRecord[], activeProfile?: string, now = ne
     name: profile.name,
     email: profile.email ?? "-",
     status: profileStatusText(profile, now),
-    reset: relativeTime(profile.quotaResetAt, now),
-    lastUsed: relativeTime(profile.lastActivatedAt, now),
-    picks: String(profile.selectionCount ?? 0),
+    quotaReset: relativeTime(profile.quotaResetAt, now),
+    lastRequest: relativeTime(profile.lastRequestAt, now),
+    activated: relativeTime(profile.lastActivatedAt, now),
+    switches: String(profile.selectionCount ?? 0),
     profile,
   }));
 }
@@ -60,8 +61,8 @@ export function printProfileTable(
   }
 
   const table = new Table({
-    head: ["", "#", "name", "email", "status", "reset", "last-used", "picks"],
-    colAligns: ["center", "right", "left", "left", "left", "left", "left", "right"],
+    head: ["", "#", "name", "email", "status", "quota-reset", "last-request", "activated", "switches"],
+    colAligns: ["center", "right", "left", "left", "left", "left", "left", "left", "right"],
     style: { head: [], border: [] },
     wordWrap: false,
   });
@@ -73,9 +74,10 @@ export function printProfileTable(
       row.name,
       row.email,
       row.status,
-      row.reset,
-      row.lastUsed,
-      row.picks,
+      row.quotaReset,
+      row.lastRequest,
+      row.activated,
+      row.switches,
     ]);
   }
 
@@ -100,9 +102,10 @@ export async function selectProfileName(
     number: Math.max(...rows.map((row) => stringWidth(row.number))),
     name: Math.max(...rows.map((row) => stringWidth(row.name))),
     status: Math.max(...rows.map((row) => stringWidth(row.status))),
-    reset: Math.max(...rows.map((row) => stringWidth(row.reset))),
-    lastUsed: Math.max(...rows.map((row) => stringWidth(row.lastUsed))),
-    picks: Math.max(...rows.map((row) => stringWidth(row.picks))),
+    quotaReset: Math.max(...rows.map((row) => stringWidth(row.quotaReset))),
+    lastRequest: Math.max(...rows.map((row) => stringWidth(row.lastRequest))),
+    activated: Math.max(...rows.map((row) => stringWidth(row.activated))),
+    switches: Math.max(...rows.map((row) => stringWidth(row.switches))),
   };
 
   const suggested = (() => {
@@ -125,9 +128,10 @@ export async function selectProfileName(
         padStartWidth(row.number, widths.number),
         padEndWidth(row.name, widths.name),
         padEndWidth(row.status, widths.status),
-        padEndWidth(row.reset, widths.reset),
-        padEndWidth(row.lastUsed, widths.lastUsed),
-        padStartWidth(row.picks, widths.picks),
+        padEndWidth(row.quotaReset, widths.quotaReset),
+        padEndWidth(row.lastRequest, widths.lastRequest),
+        padEndWidth(row.activated, widths.activated),
+        padStartWidth(row.switches, widths.switches),
         row.email,
       ].join("  "),
       description: row.profile.name === suggested ? "next" : undefined,

@@ -123,7 +123,7 @@ export async function saveCurrent(
   const name = resolveProfileName(state, nameInput, email, "save");
   const credential = await keychain.readActive();
   await keychain.writeProfile(name, credential);
-  await upsertProfile(name, email, true);
+  await upsertProfile(name, email, true, false);
   return { name, email };
 }
 

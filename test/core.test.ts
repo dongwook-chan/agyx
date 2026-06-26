@@ -6,7 +6,7 @@ import {
   uniqueProfileName,
   validateProfileName,
 } from "../src/config.js";
-import { parseQuotaEventLine } from "../src/quota.js";
+import { isRequestEventLine, parseQuotaEventLine } from "../src/quota.js";
 import { selectNextProfile } from "../src/selection.js";
 import {
   isRestartable,
@@ -138,4 +138,14 @@ test("parses quota reset hints from agy logs", () => {
     resetAt: "2026-06-26T01:30:10.000Z",
   });
   assert.equal(parseQuotaEventLine("normal log line"), undefined);
+});
+
+test("detects request event lines from agy logs", () => {
+  assert.equal(
+    isRequestEventLine(
+      "I0625 server.go:1104] Sending user message to conversation 8497ed4e-6e49-41cc-b867-604932549901 (items=1, media=0)",
+    ),
+    true,
+  );
+  assert.equal(isRequestEventLine("Forwarding user message to conversation x"), false);
 });

@@ -8,6 +8,7 @@ import {
   loadState,
   logDir,
   recordProfileQuotaExhausted,
+  recordProfileRequest,
   runtimeDir,
 } from "./config.js";
 import {
@@ -15,7 +16,7 @@ import {
   isRestartable,
   withConversation,
 } from "./processes.js";
-import { parseQuotaEventLine } from "./quota.js";
+import { isRequestEventLine, parseQuotaEventLine } from "./quota.js";
 
 export interface SessionRecord {
   id: string;
@@ -74,7 +75,7 @@ export async function supervise(args: string[]): Promise<number> {
   let conversationId: string | undefined;
   let finalCode = 0;
   let logOffset = 0;
-  let scanningQuota = false;
+  let scanningLogEvents = false;
   let profileAtStart: string | undefined;
   let quotaInterval: NodeJS.Timeout | undefined;
 
@@ -104,9 +105,9 @@ export async function supervise(args: string[]): Promise<number> {
     }
   };
 
-  const scanQuotaEvents = async (): Promise<void> => {
-    if (scanningQuota) return;
-    scanningQuota = true;
+  const scanLogEvents = async (): Promise<void> => {
+    if (scanningLogEvents) return;
+    scanningLogEvents = true;
     try {
       const profileName = profileAtStart;
       if (!profileName) return;
@@ -115,6 +116,9 @@ export async function supervise(args: string[]): Promise<number> {
       const appended = content.slice(logOffset);
       logOffset = content.length;
       for (const line of appended.split(/\r?\n/)) {
+        if (isRequestEventLine(line)) {
+          await recordProfileRequest(profileName);
+        }
         const event = parseQuotaEventLine(line);
         if (!event) continue;
         await recordProfileQuotaExhausted(profileName, event);
@@ -127,7 +131,7 @@ export async function supervise(args: string[]): Promise<number> {
     } catch {
       // The log or state file may not exist yet.
     } finally {
-      scanningQuota = false;
+      scanningLogEvents = false;
     }
   };
 
@@ -154,7 +158,7 @@ export async function supervise(args: string[]): Promise<number> {
     child.on("exit", async (code, signal) => {
       finalCode = code ?? (signal ? 128 : 1);
       await refreshConversation();
-      await scanQuotaEvents();
+      await scanLogEvents();
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
@@ -238,7 +242,7 @@ export async function supervise(args: string[]): Promise<number> {
   });
   await startChild();
   quotaInterval = setInterval(() => {
-    void scanQuotaEvents();
+    void scanLogEvents();
   }, 750);
   quotaInterval.unref();
   return await new Promise<number>(() => undefined);

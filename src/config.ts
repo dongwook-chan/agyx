@@ -9,6 +9,7 @@ export interface ProfileRecord {
   updatedAt: string;
   authenticatedAt?: string;
   lastActivatedAt?: string;
+  lastRequestAt?: string;
   lastSuccessfulRequestAt?: string;
   lastQuotaErrorAt?: string;
   quotaResetAt?: string;
@@ -69,6 +70,7 @@ export async function upsertProfile(
   name: string,
   email: string | undefined,
   makeActive: boolean,
+  countActivation = makeActive,
 ): Promise<void> {
   const state = await loadState();
   const now = new Date();
@@ -95,7 +97,7 @@ export async function upsertProfile(
     });
   }
   state.profiles.sort((left, right) => left.name.localeCompare(right.name));
-  if (makeActive) markProfileActivated(state, name, now);
+  if (makeActive) markProfileActivated(state, name, now, countActivation);
   await saveState(state);
 }
 
@@ -103,6 +105,7 @@ export function markProfileActivated(
   state: State,
   name: string,
   now = new Date(),
+  incrementSelection = true,
 ): void {
   const profile = state.profiles.find((entry) => entry.name === name);
   if (!profile) throw new Error(`Profile not found: ${name}`);
@@ -110,7 +113,9 @@ export function markProfileActivated(
   state.activeProfile = name;
   profile.lastActivatedAt = nowString;
   profile.updatedAt = nowString;
-  profile.selectionCount = (profile.selectionCount ?? 0) + 1;
+  if (incrementSelection) {
+    profile.selectionCount = (profile.selectionCount ?? 0) + 1;
+  }
   if (
     profile.quotaStatus === "exhausted"
     && profile.quotaResetAt
@@ -120,6 +125,19 @@ export function markProfileActivated(
     profile.quotaResetAt = undefined;
     profile.lastQuotaReason = undefined;
   }
+}
+
+export function markProfileRequest(
+  state: State,
+  name: string,
+  now = new Date(),
+): void {
+  const profile = state.profiles.find((entry) => entry.name === name);
+  if (!profile) return;
+  const nowString = now.toISOString();
+  profile.lastRequestAt = nowString;
+  profile.updatedAt = nowString;
+  if (profile.quotaStatus !== "exhausted") profile.quotaStatus = "available";
 }
 
 export function markProfileQuotaExhausted(
@@ -144,6 +162,15 @@ export async function recordProfileQuotaExhausted(
 ): Promise<void> {
   const state = await loadState();
   markProfileQuotaExhausted(state, name, event);
+  await saveState(state);
+}
+
+export async function recordProfileRequest(
+  name: string,
+  now = new Date(),
+): Promise<void> {
+  const state = await loadState();
+  markProfileRequest(state, name, now);
   await saveState(state);
 }
 

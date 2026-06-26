@@ -3,6 +3,10 @@ export interface QuotaEvent {
   resetAt?: string;
 }
 
+export function isRequestEventLine(line: string): boolean {
+  return /Sending user message to conversation [0-9a-f-]{36}/i.test(line);
+}
+
 function parseDurationMs(value: string): number | undefined {
   const pattern =
     /(\d+(?:\.\d+)?)\s*(d|day|days|h|hr|hrs|hour|hours|m|min|mins|minute|minutes|s|sec|secs|second|seconds)/gi;
@@ -56,4 +60,3 @@ export function parseQuotaEventLine(
     resetAt: parseResetAt(line, now),
   };
 }
-
