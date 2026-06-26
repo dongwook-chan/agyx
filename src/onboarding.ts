@@ -69,7 +69,13 @@ async function promptGithubStar(): Promise<void> {
   if (!await ask(`Star ${repository} on GitHub with gh?`, false)) return;
 
   try {
-    await run("/usr/bin/env", ["gh", "repo", "star", repository]);
+    await run("/usr/bin/env", [
+      "gh",
+      "api",
+      "--method", "PUT",
+      "/user/starred/dongwook-chan/agyx",
+      "--silent",
+    ]);
     const updated = await loadState();
     updated.onboarding = {
       ...updated.onboarding,
@@ -90,4 +96,3 @@ export async function maybeRunOnboarding(command: string): Promise<void> {
   if (command !== "install") await promptShellIntegration();
   await promptGithubStar();
 }
-
