@@ -125,20 +125,17 @@ async function confirmAndRemoveProfile(name: string): Promise<boolean> {
   const confirmed = await confirmAction(`Delete profile '${name}'?`, false);
   if (!confirmed) return false;
   await removeProfile(name);
-  console.log(`Removed profile '${name}'.`);
   return true;
 }
 
-async function promptAndRenameProfile(name: string): Promise<boolean> {
+async function promptAndRenameProfile(name: string): Promise<string | undefined> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Refusing to rename without an interactive terminal.");
   }
   const nextName = (await promptText(`Rename profile '${name}' to`, name)).trim();
-  if (!nextName || nextName === name) return false;
+  if (!nextName || nextName === name) return undefined;
   const renamed = await renameProfile(name, nextName);
-  if (!renamed) return false;
-  console.log(`Renamed profile '${name}' to '${nextName}'.`);
-  return true;
+  return renamed ? nextName : undefined;
 }
 
 async function browseProfiles(mode: "list" | "use"): Promise<string | undefined> {
@@ -150,15 +147,22 @@ async function browseProfiles(mode: "list" | "use"): Promise<string | undefined>
     throw new Error("Usage: agyx use <name> or run 'agyx use' in an interactive terminal.");
   }
 
+  let notice: string | undefined;
   while (true) {
     const state = await loadState();
-    const action = await pickProfileAction(state, mode);
+    const action = await pickProfileAction(state, mode, notice);
+    notice = undefined;
     if (action.type === "exit") return undefined;
     if (action.type === "select") return action.name;
     if (action.type === "delete") {
-      await confirmAndRemoveProfile(action.name);
+      if (await confirmAndRemoveProfile(action.name)) {
+        notice = `Removed profile '${action.name}'.`;
+      }
     } else if (action.type === "rename") {
-      await promptAndRenameProfile(action.name);
+      const nextName = await promptAndRenameProfile(action.name);
+      if (nextName) {
+        notice = `Renamed profile '${action.name}' to '${nextName}'.`;
+      }
     }
   }
 }
@@ -227,13 +231,20 @@ async function main(): Promise<number> {
       if (args.length) throw new Error("Usage: agyx list [--verify]");
       const state = verify ? await verifyAllProfiles() : await loadState();
       if (process.stdin.isTTY && process.stdout.isTTY) {
+        let notice: string | undefined;
         while (true) {
-          const action = await pickProfileAction(await loadState(), "list");
+          const action = await pickProfileAction(await loadState(), "list", notice);
+          notice = undefined;
           if (action.type === "exit") break;
           if (action.type === "delete") {
-            await confirmAndRemoveProfile(action.name);
+            if (await confirmAndRemoveProfile(action.name)) {
+              notice = `Removed profile '${action.name}'.`;
+            }
           } else if (action.type === "rename") {
-            await promptAndRenameProfile(action.name);
+            const nextName = await promptAndRenameProfile(action.name);
+            if (nextName) {
+              notice = `Renamed profile '${action.name}' to '${nextName}'.`;
+            }
           }
         }
       } else {

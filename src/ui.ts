@@ -138,6 +138,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   mode: ProfilePickerMode;
   header: string;
   choices: ProfileChoice[];
+  notice?: string;
   default?: string;
   pageSize?: number;
 }>((config, done) => {
@@ -212,7 +213,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
     ? `'${choice.value}' is already active.`
     : blockedValue === choice.value
     ? choice.blockedDescription
-    : choice.description;
+    : config.notice ?? choice.description;
   const help = config.mode === "use"
     ? color.gray("↑↓ navigate • ⏎ select • r rename • d delete • q quit")
     : color.gray("↑↓ navigate • r rename • d delete • q quit");
@@ -266,6 +267,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
 export async function pickProfileAction(
   state: Pick<State, "activeProfile" | "profiles">,
   mode: ProfilePickerMode,
+  notice?: string,
 ): Promise<ProfilePickerAction> {
   if (!state.profiles.length) throw new Error("No saved profiles.");
 
@@ -293,6 +295,7 @@ export async function pickProfileAction(
     mode,
     message: mode === "use" ? "Select profile" : "Saved profiles",
     header: profileHeaderLine(widths),
+    notice,
     default: state.activeProfile ?? (mode === "use" ? suggested : undefined),
     choices: rows.map((row) => ({
       value: row.profile.name,
