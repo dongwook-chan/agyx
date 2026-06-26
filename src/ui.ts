@@ -145,6 +145,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   const [status, setStatus] = useState<"idle" | "done">("idle");
   const [blockedValue, setBlockedValue] = useState<string | undefined>(undefined);
   const [activeNoticeValue, setActiveNoticeValue] = useState<string | undefined>(undefined);
+  const [finalAction, setFinalAction] = useState<ProfilePickerAction["type"] | undefined>(undefined);
   const initial = config.default
     ? config.choices.findIndex((choice) => choice.value === config.default)
     : -1;
@@ -155,22 +156,26 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   useKeypress((key) => {
     const keyName = key.name?.toLowerCase();
     if (keyName === "q" || keyName === "escape") {
+      setFinalAction("exit");
       setStatus("done");
       done({ type: "exit" });
       return;
     }
     if (keyName === "d" || keyName === "delete") {
+      setFinalAction("delete");
       setStatus("done");
       done({ type: "delete", name: choice.value });
       return;
     }
     if (keyName === "r") {
+      setFinalAction("rename");
       setStatus("done");
       done({ type: "rename", name: choice.value });
       return;
     }
     if (isEnterKey(key)) {
       if (config.mode === "list") {
+        setFinalAction("exit");
         setStatus("done");
         done({ type: "exit" });
         return;
@@ -179,6 +184,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
         setActiveNoticeValue(choice.value);
         setBlockedValue(undefined);
       } else if (choice.selectable) {
+        setFinalAction("select");
         setStatus("done");
         done({ type: "select", name: choice.value });
       } else {
@@ -204,6 +210,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   });
 
   if (status === "done") {
+    if (finalAction && finalAction !== "select") return "";
     return config.mode === "list"
       ? config.message
       : [prefix, config.message].filter(Boolean).join(" ");
