@@ -21,12 +21,12 @@ function profileRows(state: Pick<State, "activeProfile" | "profiles">): ProfileV
 function colorStatus(row: ProfileView, value: string): string {
   switch (row.runtimeStatus) {
     case "ready":
-      return color.green(value);
+      return value;
     case "exhausted":
-      return color.yellow(value);
+      return color.gray(value);
     case "mismatch":
     case "error":
-      return color.red(value);
+      return color.gray(value);
     case "disabled":
       return color.gray(value);
   }
@@ -34,11 +34,13 @@ function colorStatus(row: ProfileView, value: string): string {
 
 function colorCell(row: ProfileView, value: string): string {
   if (row.runtimeStatus === "ready") return value;
-  if (row.runtimeStatus === "exhausted") return color.yellow(value);
-  if (row.runtimeStatus === "mismatch" || row.runtimeStatus === "error") {
-    return color.red(value);
-  }
   return color.gray(value);
+}
+
+function blockedReason(row: ProfileView): string {
+  return row.selectable || !row.disabledReason
+    ? ""
+    : color.yellow(`blocked: ${row.disabledReason}`);
 }
 
 function tableRow(row: ProfileView): string[] {
@@ -54,6 +56,7 @@ function tableRow(row: ProfileView): string[] {
     colorCell(row, row.activated),
     colorCell(row, row.verified),
     colorCell(row, row.switches),
+    blockedReason(row),
   ];
 }
 
@@ -76,6 +79,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
       "activated",
       "verified",
       "switches",
+      "note",
     ],
     colAligns: [
       "center",
@@ -89,6 +93,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
       "left",
       "left",
       "right",
+      "left",
     ],
     style: { head: [], border: [] },
     wordWrap: false,
@@ -157,10 +162,11 @@ export async function selectProfileName(
           colorCell(row, padStartWidth(row.switches, widths.switches)),
           colorCell(row, row.expectedEmail),
           row.actualEmail === "-" ? "" : colorCell(row, `actual=${row.actualEmail}`),
+          blockedReason(row),
         ].join("  "),
-        description: row.selectable
-          ? row.profile.name === suggested ? "next" : undefined
-          : row.disabledReason,
+        description: row.selectable && row.profile.name === suggested
+          ? "next"
+          : undefined,
       })),
     });
     const row = rows.find((entry) => entry.profile.name === selected);
