@@ -1,5 +1,6 @@
 import {
   createPrompt,
+  useEffect,
   isDownKey,
   isEnterKey,
   isUpKey,
@@ -9,7 +10,7 @@ import {
   useState,
 } from "@inquirer/core";
 import { cursorHide } from "@inquirer/ansi";
-import { confirm, input } from "@inquirer/prompts";
+import { confirm } from "@inquirer/prompts";
 import Table from "cli-table3";
 import stringWidth from "string-width";
 import { color } from "./color.js";
@@ -237,6 +238,40 @@ const profilePicker = createPrompt<ProfilePickerAction, {
   ].filter(Boolean).join("\n").trimEnd() + cursorHide;
 });
 
+const textPrompt = createPrompt<string | undefined, {
+  message: string;
+  default?: string;
+}>((config, done) => {
+  const [status, setStatus] = useState<"idle" | "done">("idle");
+  const [value, setValue] = useState(config.default ?? "");
+  const prefix = usePrefix({ status });
+
+  useEffect((readline) => {
+    if (!config.default) return;
+    readline.write(config.default);
+    setValue(config.default);
+  }, []);
+
+  useKeypress((key, readline) => {
+    if (status === "done") return;
+    const keyName = key.name?.toLowerCase();
+    if (keyName === "escape") {
+      setStatus("done");
+      done(undefined);
+      return;
+    }
+    if (isEnterKey(key)) {
+      setStatus("done");
+      done(readline.line);
+      return;
+    }
+    setValue(readline.line);
+  });
+
+  if (status === "done") return "";
+  return [prefix, config.message, value].filter(Boolean).join(" ") + cursorHide;
+});
+
 export function printProfileTable(state: Pick<State, "activeProfile" | "profiles">): void {
   if (!state.profiles.length) {
     console.log("No saved profiles.");
@@ -332,11 +367,7 @@ export async function promptText(
   defaultValue?: string,
 ): Promise<string | undefined> {
   try {
-    return await input({
-      message,
-      default: defaultValue,
-      prefill: defaultValue ? "editable" : undefined,
-    });
+    return await textPrompt({ message, default: defaultValue });
   } catch (error) {
     if (error instanceof Error && error.name === "ExitPromptError") {
       return undefined;
