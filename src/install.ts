@@ -11,6 +11,18 @@ export function shellInit(): string {
   return `agy() { command agyx session -- "$@"; }`;
 }
 
+export async function shellIntegrationInstalled(): Promise<boolean> {
+  const shell = process.env.SHELL?.split("/").at(-1) ?? "zsh";
+  const rcPath = shell === "bash"
+    ? join(homedir(), ".bashrc")
+    : join(homedir(), ".zshrc");
+  try {
+    return (await readFile(rcPath, "utf8")).includes(startMarker);
+  } catch {
+    return false;
+  }
+}
+
 export async function installShellIntegration(): Promise<string> {
   await findRealAgy();
   const shell = process.env.SHELL?.split("/").at(-1) ?? "zsh";

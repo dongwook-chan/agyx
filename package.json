@@ -1,6 +1,6 @@
 {
   "name": "agyx",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Multi-account session supervisor for Google Antigravity CLI",
   "type": "module",
   "bin": {

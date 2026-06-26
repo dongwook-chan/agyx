@@ -18,6 +18,11 @@ agyx install
 source ~/.zshrc
 ```
 
+If you run an interactive `agyx` command before installing the shell
+integration, agyx asks once whether to configure `agy` as the transparent shell
+function. If GitHub CLI (`gh`) is installed, agyx also asks once whether to star
+the repository. Set `AGYX_NO_ONBOARDING=1` to suppress these prompts.
+
 The shell integration makes `agy` transparently run as:
 
 ```text

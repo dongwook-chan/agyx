@@ -23,6 +23,12 @@ export interface State {
   version: 1;
   activeProfile?: string;
   realAgyPath?: string;
+  onboarding?: {
+    shellIntegrationPromptedAt?: string;
+    shellIntegrationInstalledAt?: string;
+    githubStarPromptedAt?: string;
+    githubStarredAt?: string;
+  };
   profiles: ProfileRecord[];
 }
 

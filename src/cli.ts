@@ -11,6 +11,7 @@ import {
 } from "./coordinator.js";
 import { installShellIntegration, shellInit } from "./install.js";
 import { keychain } from "./keychain.js";
+import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
 import { ProfileRecord, loadState, saveState, validateProfileName } from "./config.js";
 import { effectiveProfileStatus, selectNextProfile } from "./selection.js";
@@ -147,6 +148,7 @@ async function main(): Promise<number> {
     console.log(help);
     return 0;
   }
+  await maybeRunOnboarding(command);
 
   switch (command) {
     case "install": {
