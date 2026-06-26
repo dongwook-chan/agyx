@@ -77,6 +77,7 @@ export async function supervise(args: string[]): Promise<number> {
   let logOffset = 0;
   let scanningLogEvents = false;
   let profileAtStart: string | undefined;
+  let quotaMarked = false;
   let quotaInterval: NodeJS.Timeout | undefined;
 
   const persist = async (): Promise<void> => {
@@ -121,12 +122,9 @@ export async function supervise(args: string[]): Promise<number> {
         }
         const event = parseQuotaEventLine(line);
         if (!event) continue;
+        if (quotaMarked) continue;
+        quotaMarked = true;
         await recordProfileQuotaExhausted(profileName, event);
-        console.error(
-          `agyx: marked profile '${profileName}' as quota exhausted`
-          + (event.resetAt ? ` until ${event.resetAt}` : "")
-          + ". Run 'agyx next' to switch.",
-        );
       }
     } catch {
       // The log or state file may not exist yet.
@@ -139,6 +137,7 @@ export async function supervise(args: string[]): Promise<number> {
     intentionalStop = false;
     paused = false;
     profileAtStart = (await loadState()).activeProfile;
+    quotaMarked = false;
     const launchArgs = withConversation(args, conversationId);
     if (!launchArgs.some((argument) =>
       argument === "--log-file" || argument.startsWith("--log-file=")
