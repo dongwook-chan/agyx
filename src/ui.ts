@@ -332,7 +332,11 @@ export async function promptText(
   defaultValue?: string,
 ): Promise<string | undefined> {
   try {
-    return await input({ message, default: defaultValue });
+    return await input({
+      message,
+      default: defaultValue,
+      prefill: defaultValue ? "editable" : undefined,
+    });
   } catch (error) {
     if (error instanceof Error && error.name === "ExitPromptError") {
       return undefined;
