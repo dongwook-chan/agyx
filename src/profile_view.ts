@@ -1,5 +1,5 @@
 import { ProfileRecord, State } from "./config.js";
-import { effectiveProfileStatus } from "./selection.js";
+import { effectiveProfileStatus, ProfileRuntimeStatus } from "./selection.js";
 
 export interface ProfileView {
   marker: string;
@@ -13,6 +13,9 @@ export interface ProfileView {
   activated: string;
   verified: string;
   switches: string;
+  selectable: boolean;
+  runtimeStatus: ProfileRuntimeStatus;
+  disabledReason?: string;
   profile: ProfileRecord;
 }
 
@@ -46,18 +49,40 @@ export function buildProfileViews(
   state: Pick<State, "activeProfile" | "profiles">,
   now = new Date(),
 ): ProfileView[] {
-  return state.profiles.map((profile, index) => ({
-    marker: profile.name === state.activeProfile ? "*" : "",
-    number: String(index + 1),
-    name: profile.name,
-    expectedEmail: profile.email ?? "-",
-    actualEmail: profile.verifiedEmail ?? "-",
-    status: profileStatusText(profile, now),
-    quotaReset: relativeTime(profile.quotaResetAt, now),
-    lastRequest: relativeTime(profile.lastRequestAt, now),
-    activated: relativeTime(profile.lastActivatedAt, now),
-    verified: relativeTime(profile.credentialVerifiedAt ?? profile.credentialMismatchAt, now),
-    switches: String(profile.selectionCount ?? 0),
-    profile,
-  }));
+  return state.profiles.map((profile, index) => {
+    const runtimeStatus = effectiveProfileStatus(profile, now);
+    const disabledReason = (() => {
+      if (runtimeStatus === "ready") return undefined;
+      if (runtimeStatus === "mismatch") {
+        return profile.credentialError
+          ?? `expected ${profile.email ?? "-"}, got ${profile.verifiedEmail ?? "-"}`;
+      }
+      if (runtimeStatus === "error") {
+        return profile.credentialError ?? "credential could not be verified";
+      }
+      if (runtimeStatus === "exhausted") {
+        return profile.quotaResetAt
+          ? `quota resets ${relativeTime(profile.quotaResetAt, now)}`
+          : "quota exhausted";
+      }
+      return "disabled";
+    })();
+    return {
+      marker: profile.name === state.activeProfile ? "*" : "",
+      number: String(index + 1),
+      name: profile.name,
+      expectedEmail: profile.email ?? "-",
+      actualEmail: profile.verifiedEmail ?? "-",
+      status: profileStatusText(profile, now),
+      quotaReset: relativeTime(profile.quotaResetAt, now),
+      lastRequest: relativeTime(profile.lastRequestAt, now),
+      activated: relativeTime(profile.lastActivatedAt, now),
+      verified: relativeTime(profile.credentialVerifiedAt ?? profile.credentialMismatchAt, now),
+      switches: String(profile.selectionCount ?? 0),
+      selectable: runtimeStatus === "ready",
+      runtimeStatus,
+      disabledReason,
+      profile,
+    };
+  });
 }

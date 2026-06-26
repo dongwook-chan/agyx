@@ -187,6 +187,7 @@ test("builds one shared profile view for list and picker", () => {
       expectedEmail: views[0]!.expectedEmail,
       actualEmail: views[0]!.actualEmail,
       status: views[0]!.status,
+      selectable: views[0]!.selectable,
     },
     {
       marker: "*",
@@ -194,6 +195,7 @@ test("builds one shared profile view for list and picker", () => {
       expectedEmail: "b@example.com",
       actualEmail: "wrong@example.com",
       status: "mismatch",
+      selectable: false,
     },
   );
 });

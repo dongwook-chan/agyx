@@ -1,6 +1,7 @@
 import { confirm, select } from "@inquirer/prompts";
 import Table from "cli-table3";
 import stringWidth from "string-width";
+import { color } from "./color.js";
 import { State } from "./config.js";
 import { buildProfileViews, ProfileView } from "./profile_view.js";
 import { selectNextProfile } from "./selection.js";
@@ -15,6 +16,45 @@ function padStartWidth(value: string, width: number): string {
 
 function profileRows(state: Pick<State, "activeProfile" | "profiles">): ProfileView[] {
   return buildProfileViews(state);
+}
+
+function colorStatus(row: ProfileView, value: string): string {
+  switch (row.runtimeStatus) {
+    case "ready":
+      return color.green(value);
+    case "exhausted":
+      return color.yellow(value);
+    case "mismatch":
+    case "error":
+      return color.red(value);
+    case "disabled":
+      return color.gray(value);
+  }
+}
+
+function colorCell(row: ProfileView, value: string): string {
+  if (row.runtimeStatus === "ready") return value;
+  if (row.runtimeStatus === "exhausted") return color.yellow(value);
+  if (row.runtimeStatus === "mismatch" || row.runtimeStatus === "error") {
+    return color.red(value);
+  }
+  return color.gray(value);
+}
+
+function tableRow(row: ProfileView): string[] {
+  return [
+    colorCell(row, row.marker),
+    colorCell(row, row.number),
+    colorCell(row, row.name),
+    colorCell(row, row.expectedEmail),
+    colorCell(row, row.actualEmail),
+    colorStatus(row, row.status),
+    colorCell(row, row.quotaReset),
+    colorCell(row, row.lastRequest),
+    colorCell(row, row.activated),
+    colorCell(row, row.verified),
+    colorCell(row, row.switches),
+  ];
 }
 
 export function printProfileTable(state: Pick<State, "activeProfile" | "profiles">): void {
@@ -55,19 +95,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
   });
 
   for (const row of profileRows(state)) {
-    table.push([
-      row.marker,
-      row.number,
-      row.name,
-      row.expectedEmail,
-      row.actualEmail,
-      row.status,
-      row.quotaReset,
-      row.lastRequest,
-      row.activated,
-      row.verified,
-      row.switches,
-    ]);
+    table.push(tableRow(row));
   }
 
   console.log(table.toString());
@@ -109,6 +137,12 @@ export async function selectProfileName(
     }
   })();
 
+  if (!rows.some((row) => row.selectable)) {
+    throw new Error(
+      "No selectable profiles. Run 'agyx list --verify' to inspect credential status.",
+    );
+  }
+
   return await select<string>({
     message: suggested
       ? `Select profile (default: next ${suggested})`
@@ -117,19 +151,22 @@ export async function selectProfileName(
     choices: rows.map((row) => ({
       value: row.profile.name,
       name: [
-        row.marker || " ",
-        padStartWidth(row.number, widths.number),
-        padEndWidth(row.name, widths.name),
-        padEndWidth(row.status, widths.status),
-        padEndWidth(row.quotaReset, widths.quotaReset),
-        padEndWidth(row.lastRequest, widths.lastRequest),
-        padEndWidth(row.activated, widths.activated),
-        padEndWidth(row.verified, widths.verified),
-        padStartWidth(row.switches, widths.switches),
-        row.expectedEmail,
-        row.actualEmail === "-" ? "" : `actual=${row.actualEmail}`,
+        colorCell(row, row.marker || " "),
+        colorCell(row, padStartWidth(row.number, widths.number)),
+        colorCell(row, padEndWidth(row.name, widths.name)),
+        colorStatus(row, padEndWidth(row.status, widths.status)),
+        colorCell(row, padEndWidth(row.quotaReset, widths.quotaReset)),
+        colorCell(row, padEndWidth(row.lastRequest, widths.lastRequest)),
+        colorCell(row, padEndWidth(row.activated, widths.activated)),
+        colorCell(row, padEndWidth(row.verified, widths.verified)),
+        colorCell(row, padStartWidth(row.switches, widths.switches)),
+        colorCell(row, row.expectedEmail),
+        row.actualEmail === "-" ? "" : colorCell(row, `actual=${row.actualEmail}`),
       ].join("  "),
-      description: row.profile.name === suggested ? "next" : undefined,
+      description: row.selectable
+        ? row.profile.name === suggested ? "next" : undefined
+        : row.disabledReason,
+      disabled: row.selectable ? false : row.disabledReason ?? true,
     })),
   });
 }
