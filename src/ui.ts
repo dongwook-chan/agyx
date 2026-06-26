@@ -122,6 +122,7 @@ interface ProfileChoice {
   description?: string;
   blockedDescription?: string;
   selectable: boolean;
+  active: boolean;
 }
 
 export type ProfilePickerMode = "list" | "use";
@@ -166,7 +167,7 @@ const profilePicker = createPrompt<ProfilePickerAction, {
         done({ type: "exit" });
         return;
       }
-      if (choice.selectable) {
+      if (choice.selectable || choice.active) {
         setStatus("done");
         done({ type: "select", name: choice.value });
       } else {
@@ -276,16 +277,15 @@ export async function pickProfileAction(
 
   return await profilePicker({
     mode,
-    message: mode === "use" && suggested
-      ? `Select profile (default: next ${suggested})`
-      : mode === "use" ? "Select profile" : "Saved profiles",
+    message: mode === "use" ? "Select profile" : "Saved profiles",
     header: profileHeaderLine(widths),
-    default: mode === "use" ? suggested : state.activeProfile,
+    default: state.activeProfile ?? (mode === "use" ? suggested : undefined),
     choices: rows.map((row) => ({
       value: row.profile.name,
       name: profileLine(row, widths),
       short: profileLine(row, widths),
       selectable: row.selectable,
+      active: row.marker === "*",
       description: !row.selectable && row.disabledReason
         ? color.yellow(row.disabledReason)
         : undefined,
