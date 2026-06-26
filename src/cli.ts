@@ -78,7 +78,10 @@ async function main(): Promise<number> {
     case "install": {
       const path = await installShellIntegration();
       console.log(`Installed agyx shell integration in ${path}`);
-      console.log("Open a new terminal or run: source " + path);
+      console.log("Open a new terminal or run:");
+      console.log(`  source ${path}`);
+      console.log("For this terminal only, you can also run:");
+      console.log('  eval "$(agyx shell-init)"');
       return 0;
     }
     case "shell-init":

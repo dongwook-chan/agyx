@@ -18,6 +18,12 @@ agyx install
 source ~/.zshrc
 ```
 
+For the current terminal only, without reloading your shell rc file:
+
+```bash
+eval "$(agyx shell-init)"
+```
+
 If you run an interactive `agyx` command before installing the shell
 integration, agyx asks once whether to configure `agy` as the transparent shell
 function. If GitHub CLI (`gh`) is installed, agyx also asks once whether to star
