@@ -21,8 +21,9 @@ const help = `agyx — multi-account session supervisor for Antigravity CLI
 Usage:
   agyx install                         Install transparent agy shell shim
   agyx session -- [agy options]        Run agy under a restartable supervisor
-  agyx save <name> [--email EMAIL]     Save the current Keychain account
-  agyx login <name> [--no-resume]      Pause all sessions and add an account
+  agyx save [name] [--email EMAIL]     Save the current Keychain account
+  agyx login [name] [--email EMAIL] [--no-resume]
+                                       Pause all sessions and add an account
   agyx use [name]                      Switch account and resume every session
   agyx next                            Rotate to the next selectable account
   agyx list                            List profiles
@@ -41,6 +42,18 @@ function takeOption(args: string[], name: string): string | undefined {
   if (index < 0) return undefined;
   if (!args[index + 1]) throw new Error(`${name} requires a value`);
   return args.splice(index, 2)[1];
+}
+
+function takeFlag(args: string[], name: string): boolean {
+  const index = args.indexOf(name);
+  if (index < 0) return false;
+  args.splice(index, 1);
+  return true;
+}
+
+function takeOptionalName(args: string[], usage: string): string | undefined {
+  if (args.length > 1) throw new Error(`Usage: ${usage}`);
+  return args.shift();
 }
 
 function relativeTime(value: string | undefined, now = new Date()): string {
@@ -149,21 +162,19 @@ async function main(): Promise<number> {
       if (args[0] === "--") args.shift();
       return await supervise(args);
     case "save": {
-      const name = args.shift();
-      if (!name) throw new Error("Usage: agyx save <name> [--email EMAIL]");
       const email = takeOption(args, "--email");
-      if (args.length) throw new Error(`Unknown arguments: ${args.join(" ")}`);
-      await saveCurrent(name, email);
-      console.log(`Saved and activated profile '${name}'.`);
+      const name = takeOptionalName(args, "agyx save [name] [--email EMAIL]");
+      const result = await saveCurrent(name, email);
+      console.log(
+        `Saved and activated profile '${result.name}'.`
+        + (result.email ? ` (${result.email})` : ""),
+      );
       return 0;
     }
     case "login": {
-      const name = args.shift();
-      if (!name) throw new Error("Usage: agyx login <name> [--email EMAIL] [--no-resume]");
       const email = takeOption(args, "--email");
-      const noResume = args.includes("--no-resume");
-      args.splice(args.indexOf("--no-resume"), noResume ? 1 : 0);
-      if (args.length) throw new Error(`Unknown arguments: ${args.join(" ")}`);
+      const noResume = takeFlag(args, "--no-resume");
+      const name = takeOptionalName(args, "agyx login [name] [--email EMAIL] [--no-resume]");
       await loginProfile(name, email, !noResume);
       return 0;
     }

@@ -43,13 +43,20 @@ prevents duplicate requests.
 Save the account currently stored by `agy`:
 
 ```bash
-agyx save personal --email you@example.com
+agyx save
+agyx save personal
 ```
+
+When the name is omitted, `agyx save` reads the active Google account from
+`~/.gemini/google_accounts.json` and derives a profile name from the email
+local-part. Use `--email EMAIL` only when you want to override the detected
+metadata.
 
 Add another account:
 
 ```bash
 agyx login work
+agyx login
 ```
 
 `agyx login` performs this transaction:
@@ -59,6 +66,9 @@ agyx login work
 3. Run the Google OAuth login flow.
 4. Save and activate the new credential.
 5. Restart every supervised session in its original terminal.
+
+When the name is omitted, `agyx login` derives it from the OAuth email detected
+in the `agy` log, falling back to `~/.gemini/google_accounts.json`.
 
 Use `--no-resume` to leave sessions paused after login.
 

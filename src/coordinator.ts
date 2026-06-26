@@ -7,9 +7,12 @@ import {
   loadState,
   logDir,
   markProfileActivated,
+  profileNameFromEmail,
+  readActiveGoogleAccountEmail,
   runtimeDir,
   saveState,
   upsertProfile,
+  uniqueProfileName,
   validateProfileName,
 } from "./config.js";
 import { keychain } from "./keychain.js";
@@ -84,11 +87,44 @@ export async function resumeAll(records: SessionRecord[]): Promise<void> {
   }
 }
 
-export async function saveCurrent(nameInput: string, email?: string): Promise<void> {
-  const name = validateProfileName(nameInput);
+export interface ProfileCaptureResult {
+  name: string;
+  email?: string;
+}
+
+function resolveProfileName(
+  state: Awaited<ReturnType<typeof loadState>>,
+  nameInput: string | undefined,
+  email: string | undefined,
+  context: "save" | "login",
+): string {
+  if (nameInput) return validateProfileName(nameInput);
+  if (!email) {
+    throw new Error(
+      context === "save"
+        ? "Usage: agyx save [name] [--email EMAIL]. Profile name could not be inferred because no active Google account email was found."
+      : "Usage: agyx login [name] [--email EMAIL] [--no-resume]. Profile name could not be inferred because login email was not detected.",
+    );
+  }
+  const existingByEmail = state.profiles.find((profile) => profile.email === email);
+  if (existingByEmail) return existingByEmail.name;
+  return uniqueProfileName(profileNameFromEmail(email), state);
+}
+
+export async function saveCurrent(
+  nameInput?: string,
+  explicitEmail?: string,
+): Promise<ProfileCaptureResult> {
+  const state = await loadState();
+  const activeProfileEmail = state.profiles.find(
+    (profile) => profile.name === state.activeProfile,
+  )?.email;
+  const email = explicitEmail ?? await readActiveGoogleAccountEmail() ?? activeProfileEmail;
+  const name = resolveProfileName(state, nameInput, email, "save");
   const credential = await keychain.readActive();
   await keychain.writeProfile(name, credential);
   await upsertProfile(name, email, true);
+  return { name, email };
 }
 
 export async function activateProfile(nameInput: string): Promise<void> {
@@ -154,11 +190,10 @@ async function interactiveLogin(logPath: string): Promise<string | undefined> {
 }
 
 export async function loginProfile(
-  nameInput: string,
+  nameInput?: string,
   explicitEmail?: string,
   resume = true,
-): Promise<void> {
-  const name = validateProfileName(nameInput);
+): Promise<ProfileCaptureResult> {
   const sessions = await pauseAll();
   const state = await loadState();
   const previousCredential = await keychain.readActive().catch(() => undefined);
@@ -173,9 +208,12 @@ export async function loginProfile(
     const detectedEmail = await interactiveLogin(logPath);
     const credential = await keychain.readActive().catch(() => undefined);
     if (!credential) throw new Error("Login ended without creating an agy credential.");
+    const email = explicitEmail ?? detectedEmail ?? await readActiveGoogleAccountEmail();
+    const name = resolveProfileName(await loadState(), nameInput, email, "login");
     await keychain.writeProfile(name, credential);
-    await upsertProfile(name, explicitEmail ?? detectedEmail, true);
+    await upsertProfile(name, email, true);
     console.log(`Captured and activated profile '${name}'.`);
+    return { name, email };
   } catch (error) {
     if (previousCredential) await keychain.writeActive(previousCredential);
     await saveState(state);

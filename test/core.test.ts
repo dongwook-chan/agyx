@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
-import { validateProfileName } from "../src/config.js";
+import {
+  profileNameFromEmail,
+  uniqueProfileName,
+  validateProfileName,
+} from "../src/config.js";
 import { parseQuotaEventLine } from "../src/quota.js";
 import { selectNextProfile } from "../src/selection.js";
 import {
@@ -15,6 +19,28 @@ test("validates profile names", () => {
   assert.equal(validateProfileName("work-1.test"), "work-1.test");
   assert.throws(() => validateProfileName("../escape"));
   assert.throws(() => validateProfileName("has space"));
+});
+
+test("derives safe unique profile names from email", () => {
+  assert.equal(profileNameFromEmail("Dong.Work+test@gmail.com"), "dong.work-test");
+  assert.equal(
+    uniqueProfileName("dong", {
+      version: 1,
+      profiles: [
+        {
+          name: "dong",
+          createdAt: "2026-06-26T00:00:00.000Z",
+          updatedAt: "2026-06-26T00:00:00.000Z",
+        },
+        {
+          name: "dong-2",
+          createdAt: "2026-06-26T00:00:00.000Z",
+          updatedAt: "2026-06-26T00:00:00.000Z",
+        },
+      ],
+    }),
+    "dong-3",
+  );
 });
 
 test("parses only agy executables", () => {
