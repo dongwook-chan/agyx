@@ -1,4 +1,15 @@
-import { confirm, select } from "@inquirer/prompts";
+import {
+  createPrompt,
+  isDownKey,
+  isEnterKey,
+  isUpKey,
+  useKeypress,
+  usePagination,
+  usePrefix,
+  useState,
+} from "@inquirer/core";
+import { cursorHide } from "@inquirer/ansi";
+import { confirm } from "@inquirer/prompts";
 import Table from "cli-table3";
 import stringWidth from "string-width";
 import { color } from "./color.js";
@@ -37,9 +48,23 @@ function colorCell(row: ProfileView, value: string): string {
   return color.gray(value);
 }
 
-function tableRow(row: ProfileView): string[] {
+const profileHeaders = [
+  "",
+  "#",
+  "name",
+  "expected-email",
+  "actual-email",
+  "status",
+  "quota-reset",
+  "last-request",
+  "activated",
+  "verified",
+  "switches",
+] as const;
+
+function profileCells(row: ProfileView): string[] {
   return [
-    colorCell(row, row.marker),
+    colorCell(row, row.marker || " "),
     colorCell(row, row.number),
     colorCell(row, row.name),
     colorCell(row, row.expectedEmail),
@@ -53,6 +78,97 @@ function tableRow(row: ProfileView): string[] {
   ];
 }
 
+function profileCellValues(row: ProfileView): string[] {
+  return [
+    row.marker || " ",
+    row.number,
+    row.name,
+    row.expectedEmail,
+    row.actualEmail,
+    row.status,
+    row.quotaReset,
+    row.lastRequest,
+    row.activated,
+    row.verified,
+    row.switches,
+  ];
+}
+
+function profileLine(row: ProfileView, widths: number[]): string {
+  return profileCells(row).map((cell, index) => {
+    const raw = profileCellValues(row)[index] ?? "";
+    return index === 1 || index === 10
+      ? padStartWidth(cell, widths[index] ?? stringWidth(raw))
+      : padEndWidth(cell, widths[index] ?? stringWidth(raw));
+  }).join("  ");
+}
+
+interface ProfileChoice {
+  value: string;
+  name: string;
+  short: string;
+  description?: string;
+  blockedDescription?: string;
+  selectable: boolean;
+}
+
+const profilePicker = createPrompt<string, {
+  message: string;
+  choices: ProfileChoice[];
+  default?: string;
+  pageSize?: number;
+}>((config, done) => {
+  const [status, setStatus] = useState<"idle" | "done">("idle");
+  const [blockedValue, setBlockedValue] = useState<string | undefined>(undefined);
+  const initial = config.default
+    ? config.choices.findIndex((choice) => choice.value === config.default)
+    : -1;
+  const [active, setActive] = useState(initial >= 0 ? initial : 0);
+  const prefix = usePrefix({ status });
+  const choice = config.choices[active]!;
+
+  useKeypress((key) => {
+    if (isEnterKey(key)) {
+      if (choice.selectable) {
+        setStatus("done");
+        done(choice.value);
+      } else {
+        setBlockedValue(choice.value);
+      }
+      return;
+    }
+    if (isUpKey(key) || isDownKey(key)) {
+      const offset = isUpKey(key) ? -1 : 1;
+      setActive((active + offset + config.choices.length) % config.choices.length);
+      setBlockedValue(undefined);
+    }
+  });
+
+  const page = usePagination({
+    items: config.choices,
+    active,
+    loop: true,
+    pageSize: config.pageSize ?? 7,
+    renderItem: ({ item, isActive }) => `${isActive ? "❯" : " "} ${item.name}`,
+  });
+
+  if (status === "done") {
+    return [prefix, config.message, choice.short].filter(Boolean).join(" ");
+  }
+
+  const description = blockedValue === choice.value
+    ? choice.blockedDescription
+    : choice.description;
+  const help = color.gray("↑↓ navigate • ⏎ select");
+  return [
+    [prefix, config.message].filter(Boolean).join(" "),
+    page,
+    " ",
+    description,
+    help,
+  ].filter(Boolean).join("\n").trimEnd() + cursorHide;
+});
+
 export function printProfileTable(state: Pick<State, "activeProfile" | "profiles">): void {
   if (!state.profiles.length) {
     console.log("No saved profiles.");
@@ -60,19 +176,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
   }
 
   const table = new Table({
-    head: [
-      "",
-      "#",
-      "name",
-      "expected-email",
-      "actual-email",
-      "status",
-      "quota-reset",
-      "last-request",
-      "activated",
-      "verified",
-      "switches",
-    ],
+    head: [...profileHeaders],
     colAligns: [
       "center",
       "right",
@@ -91,7 +195,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
   });
 
   for (const row of profileRows(state)) {
-    table.push(tableRow(row));
+    table.push(profileCells(row));
   }
 
   console.log(table.toString());
@@ -110,16 +214,12 @@ export async function selectProfileName(
   if (!state.profiles.length) throw new Error("No saved profiles.");
 
   const rows = profileRows(state);
-  const widths = {
-    number: Math.max(...rows.map((row) => stringWidth(row.number))),
-    name: Math.max(...rows.map((row) => stringWidth(row.name))),
-    status: Math.max(...rows.map((row) => stringWidth(row.status))),
-    quotaReset: Math.max(...rows.map((row) => stringWidth(row.quotaReset))),
-    lastRequest: Math.max(...rows.map((row) => stringWidth(row.lastRequest))),
-    activated: Math.max(...rows.map((row) => stringWidth(row.activated))),
-    verified: Math.max(...rows.map((row) => stringWidth(row.verified))),
-    switches: Math.max(...rows.map((row) => stringWidth(row.switches))),
-  };
+  const widths = profileHeaders.map((header, index) =>
+    Math.max(
+      stringWidth(header),
+      ...rows.map((row) => stringWidth(profileCellValues(row)[index] ?? "")),
+    )
+  );
 
   const suggested = (() => {
     try {
@@ -132,46 +232,20 @@ export async function selectProfileName(
       return undefined;
     }
   })();
-  let currentDefault = suggested;
-  let blockedSelection: string | undefined;
-
-  function descriptionFor(row: ProfileView): string | undefined {
-    if (blockedSelection === row.profile.name) {
-      return color.red(
+  return await profilePicker({
+    message: suggested ? `Select profile (default: next ${suggested})` : "Select profile",
+    default: suggested,
+    choices: rows.map((row) => ({
+      value: row.profile.name,
+      name: profileLine(row, widths),
+      short: profileLine(row, widths),
+      selectable: row.selectable,
+      description: !row.selectable && row.disabledReason
+        ? color.yellow(row.disabledReason)
+        : undefined,
+      blockedDescription: color.red(
         `Blocked: '${row.profile.name}' was not activated. ${row.disabledReason ?? "Profile is not selectable."}`,
-      );
-    }
-    if (!row.selectable && row.disabledReason) return color.yellow(row.disabledReason);
-    return undefined;
-  }
-
-  while (true) {
-    const selected = await select<string>({
-      message: currentDefault
-        ? `Select profile (default: next ${currentDefault})`
-        : "Select profile",
-      default: currentDefault,
-      choices: rows.map((row) => ({
-        value: row.profile.name,
-        name: [
-          colorCell(row, row.marker || " "),
-          colorCell(row, padStartWidth(row.number, widths.number)),
-          colorCell(row, padEndWidth(row.name, widths.name)),
-          colorStatus(row, padEndWidth(row.status, widths.status)),
-          colorCell(row, padEndWidth(row.quotaReset, widths.quotaReset)),
-          colorCell(row, padEndWidth(row.lastRequest, widths.lastRequest)),
-          colorCell(row, padEndWidth(row.activated, widths.activated)),
-          colorCell(row, padEndWidth(row.verified, widths.verified)),
-          colorCell(row, padStartWidth(row.switches, widths.switches)),
-          colorCell(row, row.expectedEmail),
-          row.actualEmail === "-" ? "" : colorCell(row, `actual=${row.actualEmail}`),
-        ].join("  "),
-        description: descriptionFor(row),
-      })),
-    });
-    const row = rows.find((entry) => entry.profile.name === selected);
-    if (row?.selectable) return selected;
-    blockedSelection = selected;
-    currentDefault = selected;
-  }
+      ),
+    })),
+  });
 }
