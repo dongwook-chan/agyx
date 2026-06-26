@@ -85,16 +85,17 @@ function profileRow(
   index: number,
   profile: ProfileRecord,
   activeProfile: string | undefined,
+  widths: { number: number; name: number; email: number; status: number; reset: number; lastUsed: number; picks: number },
   now = new Date(),
 ): string {
   const marker = profile.name === activeProfile ? "*" : " ";
-  const number = String(index + 1).padStart(2);
-  const name = profile.name.padEnd(18);
-  const email = (profile.email ?? "-").padEnd(28);
-  const status = profileStatusText(profile, now).padEnd(8);
-  const reset = relativeTime(profile.quotaResetAt, now).padEnd(8);
-  const lastUsed = relativeTime(profile.lastActivatedAt, now).padEnd(9);
-  const picks = String(profile.selectionCount ?? 0).padStart(5);
+  const number = String(index + 1).padStart(widths.number);
+  const name = profile.name.padEnd(widths.name);
+  const email = (profile.email ?? "-").padEnd(widths.email);
+  const status = profileStatusText(profile, now).padEnd(widths.status);
+  const reset = relativeTime(profile.quotaResetAt, now).padEnd(widths.reset);
+  const lastUsed = relativeTime(profile.lastActivatedAt, now).padEnd(widths.lastUsed);
+  const picks = String(profile.selectionCount ?? 0).padStart(widths.picks);
   return `${marker} ${number} ${name} ${email} ${status} ${reset} ${lastUsed} ${picks}`;
 }
 
@@ -104,9 +105,34 @@ function printProfiles(profiles: ProfileRecord[], activeProfile?: string): void 
     return;
   }
   const now = new Date();
-  console.log("    # name               email                        status   reset    last-used picks");
+  const rows = profiles.map((profile, index) => ({
+    index,
+    profile,
+    status: profileStatusText(profile, now),
+    reset: relativeTime(profile.quotaResetAt, now),
+    lastUsed: relativeTime(profile.lastActivatedAt, now),
+    picks: String(profile.selectionCount ?? 0),
+  }));
+  const widths = {
+    number: Math.max("#".length, String(profiles.length).length),
+    name: Math.max("name".length, ...profiles.map((profile) => profile.name.length)),
+    email: Math.max("email".length, ...profiles.map((profile) => (profile.email ?? "-").length)),
+    status: Math.max("status".length, ...rows.map((row) => row.status.length)),
+    reset: Math.max("reset".length, ...rows.map((row) => row.reset.length)),
+    lastUsed: Math.max("last-used".length, ...rows.map((row) => row.lastUsed.length)),
+    picks: Math.max("picks".length, ...rows.map((row) => row.picks.length)),
+  };
+  console.log(
+    `  ${"#".padStart(widths.number)} `
+    + `${"name".padEnd(widths.name)} `
+    + `${"email".padEnd(widths.email)} `
+    + `${"status".padEnd(widths.status)} `
+    + `${"reset".padEnd(widths.reset)} `
+    + `${"last-used".padEnd(widths.lastUsed)} `
+    + `${"picks".padStart(widths.picks)}`,
+  );
   for (const [index, profile] of profiles.entries()) {
-    console.log(profileRow(index, profile, activeProfile, now));
+    console.log(profileRow(index, profile, activeProfile, widths, now));
   }
 }
 
