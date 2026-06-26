@@ -218,7 +218,14 @@ export function markProfileCredentialMismatch(
     ? `expected ${expectedEmail ?? "-"}, got ${actualEmail}`
     : "credential probe did not return an authenticated email";
   profile.updatedAt = nowString;
-  if (state.activeProfile === name) state.activeProfile = undefined;
+  if (state.activeProfile === name) {
+    state.activeProfile = actualEmail
+      ? state.profiles.find((entry) =>
+        entry.name !== name
+        && (entry.email === actualEmail || entry.verifiedEmail === actualEmail)
+      )?.name
+      : undefined;
+  }
 }
 
 export function markProfileIneligible(

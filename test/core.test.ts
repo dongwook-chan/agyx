@@ -3,6 +3,7 @@ import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
 import {
   markProfileActivated,
+  markProfileCredentialMismatch,
   markProfileIneligible,
   profileNameFromEmail,
   uniqueProfileName,
@@ -66,6 +67,36 @@ test("parses and blocks ineligible Antigravity accounts", () => {
   assert.equal(views[0]!.marker, "*");
   assert.equal(views[0]!.status, "ineligible");
   assert.equal(views[0]!.selectable, false);
+});
+
+test("credential mismatch reconciles active profile by actual credential identity", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state = {
+    version: 1 as const,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        email: "a@example.com",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+      {
+        name: "b",
+        email: "b@example.com",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    ],
+  };
+
+  markProfileCredentialMismatch(state, "a", "b@example.com", "a@example.com", now);
+
+  assert.equal(state.activeProfile, "b");
+  const views = buildProfileViews(state, now);
+  assert.equal(views[0]!.status, "mismatch");
+  assert.equal(views[0]!.marker, "");
+  assert.equal(views[1]!.marker, "*");
 });
 
 test("validates profile names", () => {
