@@ -227,8 +227,13 @@ export async function supervise(args: string[]): Promise<number> {
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
-        console.error(`\n[agyx] Session ended (exit code ${finalCode}). Restarting...`);
-        setTimeout(() => { void startChild(); }, 1000);
+        if (finalCode !== 0) {
+          console.error(`\n[agyx] Session ended unexpectedly (exit code ${finalCode}). Restarting...`);
+          setTimeout(() => { void startChild(); }, 1000);
+        } else {
+          await shutdown();
+          process.exit(0);
+        }
       }
     });
   };

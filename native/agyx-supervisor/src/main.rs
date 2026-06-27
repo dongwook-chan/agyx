@@ -287,11 +287,18 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         if let Some(code) = exited {
             guard.refresh_conversation();
             guard.child = None;
-            let should_exit = !guard.intentional_stop && !guard.paused;
             let _ = guard.persist();
-            if should_exit {
+            if guard.intentional_stop || guard.paused {
                 cleanup_paths(&socket_path, &record_path);
                 return Ok(code);
+            }
+            if code == 0 {
+                cleanup_paths(&socket_path, &record_path);
+                return Ok(0);
+            } else {
+                eprintln!("\n[agyx] Session ended unexpectedly (exit code {}). Restarting...", code);
+                thread::sleep(StdDuration::from_secs(1));
+                guard.start_child()?;
             }
         }
     }

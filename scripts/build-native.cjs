@@ -33,5 +33,15 @@ copyFileSync(
   join(binDir, binaryName),
 );
 chmodSync(join(binDir, binaryName), 0o755);
+if (process.platform === "darwin") {
+  const codesignResult = spawnSync("codesign", ["-f", "-s", "-", join(binDir, binaryName)], {
+    stdio: "inherit",
+  });
+  if (codesignResult.status !== 0) {
+    console.warn(`Warning: codesign failed with status ${codesignResult.status}`);
+  } else {
+    console.log(`Signed bin/${binaryName}`);
+  }
+}
 chmodSync(join(binDir, "agyx-supervisor"), 0o755);
 console.log(`Built bin/${binaryName}`);
