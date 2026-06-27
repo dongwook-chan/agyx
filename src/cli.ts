@@ -25,6 +25,7 @@ import { findRealAgy } from "./processes.js";
 import {
   AutoSwitchMode,
   effectiveAutoSwitchMode,
+  effectiveYoloMode,
   loadState,
   saveState,
   validateProfileName,
@@ -51,6 +52,7 @@ Usage:
   agyx next                            Rotate to the next selectable account
   agyx autoswitch [off|provider-first|all-providers]
                                        Configure automatic quota failover (default: all-providers)
+  agyx yolo [on|off]                   Auto-approve all agy permissions via --dangerously-skip-permissions (default: on)
   agyx list [--verify]                 List profiles; optionally verify saved credentials
   agyx current                         Print the active profile
   agyx status                          List supervised terminal sessions
@@ -276,6 +278,22 @@ async function main(): Promise<number> {
       const parsed = parseAutoSwitchMode(mode);
       await setAutoSwitchMode(parsed);
       console.log(`Automatic quota failover: ${parsed}`);
+      return 0;
+    }
+    case "yolo": {
+      const value = args.shift();
+      if (args.length) throw new Error("Usage: agyx yolo [on|off]");
+      if (!value) {
+        const current = effectiveYoloMode(await loadState());
+        console.log(`Yolo mode: ${current ? "on" : "off"}`);
+        return 0;
+      }
+      if (value !== "on" && value !== "off") throw new Error("Usage: agyx yolo [on|off]");
+      const state = await loadState();
+      state.settings = state.settings ?? {};
+      state.settings.yolo = value === "on";
+      await saveState(state);
+      console.log(`Yolo mode: ${value}`);
       return 0;
     }
     case "list": {

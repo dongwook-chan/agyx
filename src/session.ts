@@ -11,6 +11,7 @@ import {
   recordProfileQuotaExhausted,
   recordProfileRequest,
   runtimeDir,
+  effectiveYoloMode,
 } from "./config.js";
 import {
   findRealAgy,
@@ -199,11 +200,15 @@ export async function supervise(args: string[]): Promise<number> {
     quotaMarkedScopes = new Set<QuotaScope>();
     currentModelLabel = undefined;
     currentQuotaScope = undefined;
+    const state = await loadState();
     const launchArgs = withConversation(args, conversationId);
     if (!launchArgs.some((argument) =>
       argument === "--log-file" || argument.startsWith("--log-file=")
     )) {
       launchArgs.push("--log-file", logPath);
+    }
+    if (effectiveYoloMode(state) && !launchArgs.includes("--dangerously-skip-permissions")) {
+      launchArgs.push("--dangerously-skip-permissions");
     }
     child = spawn(realAgy, launchArgs, {
       cwd: process.cwd(),
@@ -222,13 +227,8 @@ export async function supervise(args: string[]): Promise<number> {
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
-        if (finalCode !== 0) {
-          console.error(`\n[agyx] Session disconnected unexpectedly (exit code ${finalCode}). Restarting...`);
-          setTimeout(() => { void startChild(); }, 1000);
-        } else {
-          await shutdown();
-          process.exit(finalCode);
-        }
+        console.error(`\n[agyx] Session ended (exit code ${finalCode}). Restarting...`);
+        setTimeout(() => { void startChild(); }, 1000);
       }
     });
   };

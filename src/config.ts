@@ -19,6 +19,12 @@ export function effectiveAutoSwitchMode(state: Pick<State, "settings">): AutoSwi
   return state.settings?.autoSwitchMode ?? defaultAutoSwitchMode;
 }
 
+export const defaultYoloMode = true;
+
+export function effectiveYoloMode(state: Pick<State, "settings">): boolean {
+  return state.settings?.yolo ?? defaultYoloMode;
+}
+
 export interface ProfileRecord {
   name: string;
   previousNames?: string[];
@@ -53,6 +59,7 @@ export interface State {
   realAgyPath?: string;
   settings?: {
     autoSwitchMode?: AutoSwitchMode;
+    yolo?: boolean;
   };
   onboarding?: {
     shellIntegrationPromptedAt?: string;
