@@ -292,7 +292,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
                 cleanup_paths(&socket_path, &record_path);
                 return Ok(code);
             }
-            let is_abnormal = code != 0 || log_contains_sigterm(&guard.log_path);
+            let is_abnormal = code != 0 || is_abnormal_exit_log(&guard.log_path);
             if !is_abnormal {
                 cleanup_paths(&socket_path, &record_path);
                 return Ok(0);
@@ -504,9 +504,21 @@ fn is_restartable(args: &[String]) -> bool {
     !args.iter().any(|arg| arg == "-p" || arg == "--print" || arg == "--prompt")
 }
 
-fn log_contains_sigterm(log_path: &Path) -> bool {
+fn is_abnormal_exit_log(log_path: &Path) -> bool {
     if let Ok(content) = fs::read_to_string(log_path) {
-        content.contains("signal terminated") || content.contains("Got signal")
+        let keywords = [
+            "signal terminated",
+            "Got signal",
+            "model unreachable",
+            "context canceled",
+            "quota reached",
+            "quota exceeded",
+            "RESOURCE_EXHAUSTED",
+            "connection lost",
+            "connection closed",
+            "stream error",
+        ];
+        keywords.iter().any(|kw| content.contains(kw))
     } else {
         false
     }

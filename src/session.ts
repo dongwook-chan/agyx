@@ -228,12 +228,25 @@ export async function supervise(args: string[]): Promise<number> {
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
-        let hasSigterm = false;
-        try {
-          const logContent = readFileSync(logPath, "utf8");
-          hasSigterm = logContent.includes("signal terminated") || logContent.includes("Got signal");
-        } catch {}
-        const isAbnormal = finalCode !== 0 || hasSigterm;
+        let isAbnormal = finalCode !== 0;
+        if (!isAbnormal) {
+          try {
+            const logContent = readFileSync(logPath, "utf8");
+            const keywords = [
+              "signal terminated",
+              "Got signal",
+              "model unreachable",
+              "context canceled",
+              "quota reached",
+              "quota exceeded",
+              "RESOURCE_EXHAUSTED",
+              "connection lost",
+              "connection closed",
+              "stream error",
+            ];
+            isAbnormal = keywords.some(kw => logContent.includes(kw));
+          } catch {}
+        }
         if (isAbnormal) {
           console.error(`\n[agyx] Session ended unexpectedly (exit code ${finalCode}). Restarting...`);
           setTimeout(() => { void startChild(); }, 1000);
