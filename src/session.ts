@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from "node:child_process";
 import { createServer, Socket } from "node:net";
 import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import {
   cleanupRuntimeFile,
   ensureDirectories,
@@ -227,7 +228,13 @@ export async function supervise(args: string[]): Promise<number> {
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
-        if (finalCode !== 0) {
+        let hasSigterm = false;
+        try {
+          const logContent = readFileSync(logPath, "utf8");
+          hasSigterm = logContent.includes("signal terminated") || logContent.includes("Got signal");
+        } catch {}
+        const isAbnormal = finalCode !== 0 || hasSigterm;
+        if (isAbnormal) {
           console.error(`\n[agyx] Session ended unexpectedly (exit code ${finalCode}). Restarting...`);
           setTimeout(() => { void startChild(); }, 1000);
         } else {
