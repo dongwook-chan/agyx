@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
 import {
+  effectiveAutoSwitchMode,
   markProfileActivated,
   markProfileCredentialMismatch,
   markProfileIneligible,
+  markProfileQuotaExhausted,
   markProfileRequest,
   profileNameFromEmail,
   uniqueProfileName,
@@ -12,9 +14,23 @@ import {
 } from "../src/config.js";
 import type { State } from "../src/config.js";
 import { parseEligibilityEventLine } from "../src/eligibility.js";
+import { shellInit } from "../src/install.js";
 import { buildProfileViews } from "../src/profile_view.js";
-import { isRequestEventLine, parseQuotaEventLine } from "../src/quota.js";
-import { selectNextProfile } from "../src/selection.js";
+import {
+  parseModelEventLine,
+  isRequestEventLine,
+  parseQuotaEventLine,
+} from "../src/quota.js";
+import {
+  effectiveProfileStatus,
+  selectAutoSwitchProfile,
+  selectNextProfile,
+  shouldAutoSwitchAfterQuota,
+} from "../src/selection.js";
+import {
+  nativeSupervisorBinaryName,
+  nativeSupervisorHostStatus,
+} from "../src/native.js";
 import {
   isRestartable,
   parsePS,
@@ -40,6 +56,28 @@ test("activation keeps exhausted quota until reset time", () => {
   markProfileActivated(state, "a", now, false);
   assert.equal(state.profiles[0]!.quotaStatus, "exhausted");
   assert.equal(state.profiles[0]!.quotaResetAt, "2026-06-27T00:00:00.000Z");
+});
+
+test("shell integration uses the lightweight agy shim", () => {
+  assert.match(shellInit(), /command agyx-supervisor "\$@"/);
+  assert.match(shellInit(), /command agyx-agy "\$@"/);
+});
+
+test("native supervisor is scoped to supported arm64 Unix hosts", () => {
+  assert.equal(nativeSupervisorBinaryName("darwin", "arm64"), "agyx-supervisor-darwin-arm64");
+  assert.equal(nativeSupervisorBinaryName("linux", "arm64"), "agyx-supervisor-linux-arm64");
+  assert.equal(nativeSupervisorHostStatus("darwin", "arm64").supported, true);
+  assert.equal(nativeSupervisorHostStatus("linux", "arm64").supported, true);
+  assert.equal(nativeSupervisorHostStatus("darwin", "x64").supported, false);
+  assert.equal(nativeSupervisorHostStatus("linux", "x64").supported, false);
+});
+
+test("default autoswitch mode is all-providers", () => {
+  assert.equal(effectiveAutoSwitchMode({}), "all-providers");
+  assert.equal(
+    effectiveAutoSwitchMode({ settings: { autoSwitchMode: "provider-first" } }),
+    "provider-first",
+  );
 });
 
 test("parses and blocks ineligible Antigravity accounts", () => {
@@ -317,6 +355,228 @@ test("parses quota reset hints from agy logs", () => {
     resetAt: "2026-06-26T01:30:10.000Z",
   });
   assert.equal(parseQuotaEventLine("normal log line"), undefined);
+});
+
+test("tracks provider-scoped quota only from model log context", () => {
+  const modelEvent = parseModelEventLine(
+    'I model_config_manager.go:157] Propagating selected model override to backend: label="Claude Sonnet 4.6 (Thinking)"',
+  );
+  assert.deepEqual(modelEvent, {
+    label: "Claude Sonnet 4.6 (Thinking)",
+    scope: "claude",
+  });
+
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    ],
+  };
+
+  markProfileQuotaExhausted(state, "b", {
+    reason: "individual quota reached",
+    resetAt: "2026-06-27T00:00:00.000Z",
+    scope: "claude",
+    modelLabel: "Claude Sonnet 4.6 (Thinking)",
+  }, now);
+
+  assert.equal(state.profiles[1]!.quotaStatus, undefined);
+  assert.equal(state.profiles[1]!.quotaScopes?.claude?.modelLabel, "Claude Sonnet 4.6 (Thinking)");
+  assert.equal(
+    effectiveProfileStatus(state.profiles[1]!, now, { quotaScopes: ["gemini"] }),
+    "ready",
+  );
+  assert.equal(
+    effectiveProfileStatus(state.profiles[1]!, now, { quotaScopes: ["claude"] }),
+    "exhausted",
+  );
+  assert.equal(selectNextProfile(state, now, { quotaScopes: ["gemini"] }).name, "b");
+  assert.equal(selectNextProfile(state, now, { quotaScopes: ["claude"] }).name, "a");
+});
+
+test("auto switch provider-first skips only current provider quota", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          claude: {
+            status: "exhausted",
+            resetAt: "2026-06-27T00:00:00.000Z",
+          },
+        },
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          gemini: {
+            status: "exhausted",
+            resetAt: "2026-06-27T00:00:00.000Z",
+          },
+        },
+      },
+      {
+        name: "c",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          claude: {
+            status: "exhausted",
+            resetAt: "2026-06-27T00:00:00.000Z",
+          },
+        },
+      },
+    ],
+  };
+
+  assert.equal(
+    shouldAutoSwitchAfterQuota(state.profiles[0], "provider-first", "claude", now),
+    true,
+  );
+  assert.equal(selectAutoSwitchProfile(state, "provider-first", "claude", now).name, "b");
+});
+
+test("auto switch all-providers waits until both Claude and Gemini are exhausted", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          claude: {
+            status: "exhausted",
+            resetAt: "2026-06-27T00:00:00.000Z",
+          },
+        },
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+      {
+        name: "c",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          gemini: {
+            status: "exhausted",
+            resetAt: "2026-06-27T00:00:00.000Z",
+          },
+        },
+      },
+    ],
+  };
+
+  assert.equal(
+    shouldAutoSwitchAfterQuota(state.profiles[0], "all-providers", "claude", now),
+    false,
+  );
+
+  state.profiles[0]!.quotaScopes!.gemini = {
+    status: "exhausted",
+    resetAt: "2026-06-27T00:00:00.000Z",
+  };
+
+  assert.equal(
+    shouldAutoSwitchAfterQuota(state.profiles[0], "all-providers", "gemini", now),
+    true,
+  );
+  assert.equal(selectAutoSwitchProfile(state, "all-providers", "gemini", now).name, "b");
+});
+
+test("auto switch treats unknown profile-wide quota as both provider quotas", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "exhausted",
+        quotaResetAt: "2026-06-27T00:00:00.000Z",
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "exhausted",
+        quotaResetAt: "2026-06-27T00:00:00.000Z",
+      },
+      {
+        name: "c",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    ],
+  };
+
+  assert.equal(
+    shouldAutoSwitchAfterQuota(state.profiles[0], "all-providers", "unknown", now),
+    true,
+  );
+  assert.equal(selectAutoSwitchProfile(state, "provider-first", "unknown", now).name, "c");
+});
+
+test("auto switch orders fallback candidates by earliest quota reset", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          claude: { status: "exhausted", resetAt: "2026-06-27T00:00:00.000Z" },
+          gemini: { status: "exhausted", resetAt: "2026-06-27T00:00:00.000Z" },
+        },
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          gemini: { status: "exhausted", resetAt: "2026-06-29T00:00:00.000Z" },
+        },
+      },
+      {
+        name: "c",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          gemini: { status: "exhausted", resetAt: "2026-06-28T00:00:00.000Z" },
+        },
+      },
+    ],
+  };
+
+  assert.equal(selectAutoSwitchProfile(state, "all-providers", "claude", now).name, "c");
 });
 
 test("detects request event lines from agy logs", () => {

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import {
   activateProfile,
+  activeQuotaScopes,
+  autoSwitchAfterQuota,
   loginProfile,
   pauseAll,
   resumeAll,
   saveCurrent,
+  setAutoSwitchMode,
   sessionRecords,
   switchProfile,
   switchToNextProfile,
@@ -19,9 +22,22 @@ import {
 import { keychain } from "./keychain.js";
 import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
-import { loadState, saveState, validateProfileName } from "./config.js";
+import {
+  AutoSwitchMode,
+  effectiveAutoSwitchMode,
+  loadState,
+  saveState,
+  validateProfileName,
+} from "./config.js";
+import { QuotaScope } from "./quota.js";
 import { supervise } from "./session.js";
-import { confirmAction, pickProfileAction, printProfileTable, promptText } from "./ui.js";
+import {
+  confirmAction,
+  pickAutoSwitchMode,
+  pickProfileAction,
+  printProfileTable,
+  promptText,
+} from "./ui.js";
 
 const help = `agyx — multi-account session supervisor for Antigravity CLI
 
@@ -33,6 +49,8 @@ Usage:
                                        Pause all sessions and add an account
   agyx use [name]                      Switch account and resume every session
   agyx next                            Rotate to the next selectable account
+  agyx autoswitch [off|provider-first|all-providers]
+                                       Configure automatic quota failover (default: all-providers)
   agyx list [--verify]                 List profiles; optionally verify saved credentials
   agyx current                         Print the active profile
   agyx status                          List supervised terminal sessions
@@ -77,6 +95,20 @@ function takeFlag(args: string[], name: string): boolean {
 function takeOptionalName(args: string[], usage: string): string | undefined {
   if (args.length > 1) throw new Error(`Usage: ${usage}`);
   return args.shift();
+}
+
+function parseAutoSwitchMode(value: string): AutoSwitchMode {
+  if (["off", "provider-first", "all-providers"].includes(value)) {
+    return value as AutoSwitchMode;
+  }
+  throw new Error("Usage: agyx autoswitch [off|provider-first|all-providers]");
+}
+
+function parseQuotaScope(value: string | undefined): QuotaScope {
+  if (value === "claude" || value === "gemini" || value === "gpt-oss" || value === "unknown") {
+    return value;
+  }
+  return "unknown";
 }
 
 async function removeProfile(name: string): Promise<void> {
@@ -139,9 +171,10 @@ async function promptAndRenameProfile(name: string): Promise<string | undefined>
 }
 
 async function browseProfiles(mode: "list" | "use"): Promise<string | undefined> {
+  const quotaScopes = await activeQuotaScopes();
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     if (mode === "list") {
-      printProfileTable(await loadState());
+      printProfileTable(await loadState(), quotaScopes);
       return undefined;
     }
     throw new Error("Usage: agyx use <name> or run 'agyx use' in an interactive terminal.");
@@ -150,7 +183,7 @@ async function browseProfiles(mode: "list" | "use"): Promise<string | undefined>
   let notice: string | undefined;
   while (true) {
     const state = await loadState();
-    const action = await pickProfileAction(state, mode, notice);
+    const action = await pickProfileAction(state, mode, notice, quotaScopes);
     notice = undefined;
     if (action.type === "exit") return undefined;
     if (action.type === "select") return action.name;
@@ -226,14 +259,34 @@ async function main(): Promise<number> {
       printSwitchResult(result);
       return 0;
     }
+    case "autoswitch": {
+      const mode = args.shift();
+      if (args.length) throw new Error("Usage: agyx autoswitch [off|provider-first|all-providers]");
+      if (!mode) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+          console.log(effectiveAutoSwitchMode(await loadState()));
+          return 0;
+        }
+        const selected = await pickAutoSwitchMode(effectiveAutoSwitchMode(await loadState()));
+        if (!selected) return 0;
+        await setAutoSwitchMode(selected);
+        console.log(`Automatic quota failover: ${selected}`);
+        return 0;
+      }
+      const parsed = parseAutoSwitchMode(mode);
+      await setAutoSwitchMode(parsed);
+      console.log(`Automatic quota failover: ${parsed}`);
+      return 0;
+    }
     case "list": {
       const verify = takeFlag(args, "--verify");
       if (args.length) throw new Error("Usage: agyx list [--verify]");
       const state = verify ? await verifyAllProfiles() : await loadState();
       if (process.stdin.isTTY && process.stdout.isTTY) {
         let notice: string | undefined;
+        const quotaScopes = await activeQuotaScopes();
         while (true) {
-          const action = await pickProfileAction(await loadState(), "list", notice);
+          const action = await pickProfileAction(await loadState(), "list", notice, quotaScopes);
           notice = undefined;
           if (action.type === "exit") break;
           if (action.type === "delete") {
@@ -248,7 +301,7 @@ async function main(): Promise<number> {
           }
         }
       } else {
-        printProfileTable(state);
+        printProfileTable(state, await activeQuotaScopes());
       }
       return 0;
     }
@@ -306,11 +359,15 @@ async function main(): Promise<number> {
       console.log("current shell check: run `type agy` in your terminal; it should report a shell function");
       console.log(`profiles: ${state.profiles.length}`);
       console.log(`active profile: ${state.activeProfile ?? "unmanaged"}`);
+      console.log(`auto switch: ${effectiveAutoSwitchMode(state)}`);
       console.log(`supervised sessions: ${sessions.length}`);
       return 0;
     }
     case "_activate":
       await activateProfile(args[0] ?? "");
+      return 0;
+    case "_auto-next":
+      await autoSwitchAfterQuota(parseQuotaScope(args[0]));
       return 0;
     default:
       throw new Error(`Unknown command: ${command}\n\n${help}`);

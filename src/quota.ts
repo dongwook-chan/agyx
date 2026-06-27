@@ -1,10 +1,40 @@
 export interface QuotaEvent {
   reason: string;
   resetAt?: string;
+  scope?: QuotaScope;
+  modelLabel?: string;
+}
+
+export type QuotaScope = "claude" | "gemini" | "gpt-oss" | "unknown";
+
+export interface ModelEvent {
+  label: string;
+  scope: QuotaScope;
 }
 
 export function isRequestEventLine(line: string): boolean {
   return /Sending user message to conversation [0-9a-f-]{36}/i.test(line);
+}
+
+export function classifyModelScope(label: string | undefined): QuotaScope {
+  if (!label) return "unknown";
+  const lower = label.toLowerCase();
+  if (lower.includes("claude")) return "claude";
+  if (lower.includes("gemini")) return "gemini";
+  if (lower.includes("gpt-oss") || lower.includes("gpt oss")) return "gpt-oss";
+  return "unknown";
+}
+
+export function parseModelEventLine(line: string): ModelEvent | undefined {
+  const propagated = line.match(
+    /Propagating selected model override to backend:\s+label="([^"]+)"/i,
+  )?.[1];
+  if (propagated) return { label: propagated, scope: classifyModelScope(propagated) };
+
+  const resolving = line.match(/Resolving model\s+(.+)$/i)?.[1]?.trim();
+  if (resolving) return { label: resolving, scope: classifyModelScope(resolving) };
+
+  return undefined;
 }
 
 function parseDurationMs(value: string): number | undefined {

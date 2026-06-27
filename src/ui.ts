@@ -14,8 +14,9 @@ import { confirm } from "@inquirer/prompts";
 import Table from "cli-table3";
 import stringWidth from "string-width";
 import { color } from "./color.js";
-import { State } from "./config.js";
+import { AutoSwitchMode, State } from "./config.js";
 import { buildProfileViews, ProfileView } from "./profile_view.js";
+import { QuotaScope } from "./quota.js";
 import { selectNextProfile } from "./selection.js";
 
 function padEndWidth(value: string, width: number): string {
@@ -26,8 +27,11 @@ function padStartWidth(value: string, width: number): string {
   return " ".repeat(Math.max(0, width - stringWidth(value))) + value;
 }
 
-function profileRows(state: Pick<State, "activeProfile" | "profiles">): ProfileView[] {
-  return buildProfileViews(state);
+function profileRows(
+  state: Pick<State, "activeProfile" | "profiles">,
+  quotaScopes: QuotaScope[] = [],
+): ProfileView[] {
+  return buildProfileViews(state, new Date(), { quotaScopes });
 }
 
 function colorStatus(row: ProfileView, value: string): string {
@@ -272,7 +276,10 @@ const textPrompt = createPrompt<string | undefined, {
   return [prefix, config.message, value].filter(Boolean).join(" ") + cursorHide;
 });
 
-export function printProfileTable(state: Pick<State, "activeProfile" | "profiles">): void {
+export function printProfileTable(
+  state: Pick<State, "activeProfile" | "profiles">,
+  quotaScopes: QuotaScope[] = [],
+): void {
   if (!state.profiles.length) {
     console.log("No saved profiles.");
     return;
@@ -297,7 +304,7 @@ export function printProfileTable(state: Pick<State, "activeProfile" | "profiles
     wordWrap: false,
   });
 
-  for (const row of profileRows(state)) {
+  for (const row of profileRows(state, quotaScopes)) {
     table.push(row.marker === "*"
       ? profileCellValues(row).map((cell) => color.inverse(cell))
       : profileCells(row));
@@ -310,10 +317,11 @@ export async function pickProfileAction(
   state: Pick<State, "activeProfile" | "profiles">,
   mode: ProfilePickerMode,
   notice?: string,
+  quotaScopes: QuotaScope[] = [],
 ): Promise<ProfilePickerAction> {
   if (!state.profiles.length) throw new Error("No saved profiles.");
 
-  const rows = profileRows(state);
+  const rows = profileRows(state, quotaScopes);
   const widths = profileHeaders.map((header, index) =>
     Math.max(
       stringWidth(header),
@@ -327,7 +335,7 @@ export async function pickProfileAction(
         version: 1,
         activeProfile: state.activeProfile,
         profiles: state.profiles,
-      }).name;
+      }, new Date(), { quotaScopes }).name;
     } catch {
       return undefined;
     }
@@ -360,6 +368,85 @@ export async function confirmAction(
   defaultValue: boolean,
 ): Promise<boolean> {
   return await confirm({ message, default: defaultValue });
+}
+
+const autoSwitchModes: Array<{
+  value: AutoSwitchMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "all-providers",
+    label: "all-providers",
+    description: "Switch only after Claude and Gemini are both exhausted on the active profile.",
+  },
+  {
+    value: "provider-first",
+    label: "provider-first",
+    description: "Switch as soon as the current provider is exhausted.",
+  },
+  {
+    value: "off",
+    label: "off",
+    description: "Record quota events but do not switch automatically.",
+  },
+];
+
+const autoSwitchPicker = createPrompt<AutoSwitchMode | undefined, {
+  message: string;
+  default: AutoSwitchMode;
+}>((config, done) => {
+  const [status, setStatus] = useState<"idle" | "done">("idle");
+  const initial = autoSwitchModes.findIndex((mode) => mode.value === config.default);
+  const [active, setActive] = useState(initial >= 0 ? initial : 0);
+  const prefix = usePrefix({ status });
+
+  useKeypress((key) => {
+    const keyName = key.name?.toLowerCase();
+    if (keyName === "q" || keyName === "escape") {
+      setStatus("done");
+      done(undefined);
+      return;
+    }
+    if (isEnterKey(key)) {
+      setStatus("done");
+      done(autoSwitchModes[active]!.value);
+      return;
+    }
+    if (isUpKey(key) || isDownKey(key)) {
+      const offset = isUpKey(key) ? -1 : 1;
+      setActive((active + offset + autoSwitchModes.length) % autoSwitchModes.length);
+    }
+  });
+
+  if (status === "done") return "";
+  const lines = autoSwitchModes.map((mode, index) => {
+    const marker = index === active ? "❯" : " ";
+    const selected = mode.value === config.default ? "*" : " ";
+    const line = `${marker} ${selected} ${mode.label.padEnd(14)} ${mode.description}`;
+    return index === active ? color.inverse(line) : line;
+  });
+  return [
+    [prefix, config.message].filter(Boolean).join(" "),
+    ...lines,
+    color.gray("↑↓ navigate • ⏎ select • q quit"),
+  ].join("\n") + cursorHide;
+});
+
+export async function pickAutoSwitchMode(
+  currentMode: AutoSwitchMode,
+): Promise<AutoSwitchMode | undefined> {
+  try {
+    return await autoSwitchPicker({
+      message: "Select autoswitch mode",
+      default: currentMode,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 export async function promptText(

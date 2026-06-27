@@ -18,7 +18,12 @@ import {
   withConversation,
 } from "./processes.js";
 import { parseEligibilityEventLine } from "./eligibility.js";
-import { isRequestEventLine, parseQuotaEventLine } from "./quota.js";
+import {
+  isRequestEventLine,
+  parseModelEventLine,
+  parseQuotaEventLine,
+  QuotaScope,
+} from "./quota.js";
 
 export interface SessionRecord {
   id: string;
@@ -32,6 +37,8 @@ export interface SessionRecord {
   paused: boolean;
   restartable: boolean;
   startedAt: string;
+  currentModelLabel?: string;
+  currentQuotaScope?: QuotaScope;
 }
 
 type SessionCommand = { command: "pause" | "resume" | "status" | "shutdown" };
@@ -51,6 +58,21 @@ export function detectConversation(content: string): string | undefined {
 
 function writeJSON(socket: Socket, value: unknown): void {
   socket.end(`${JSON.stringify(value)}\n`);
+}
+
+function triggerAutoSwitch(scope: QuotaScope): void {
+  const cliPath = process.argv[1];
+  if (!cliPath) return;
+  const child = spawn(process.execPath, [cliPath, "_auto-next", scope], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      AGYX_AUTO_SWITCH_TRIGGER: "1",
+    },
+  });
+  child.unref();
 }
 
 export async function supervise(args: string[]): Promise<number> {
@@ -80,9 +102,11 @@ export async function supervise(args: string[]): Promise<number> {
   let logOffset = 0;
   let scanningLogEvents = false;
   let profileAtStart: string | undefined;
-  let quotaMarked = false;
+  let quotaMarkedScopes = new Set<QuotaScope>();
   let quotaInterval: NodeJS.Timeout | undefined;
   let persistCount = 0;
+  let currentModelLabel: string | undefined;
+  let currentQuotaScope: QuotaScope | undefined;
 
   const currentRecord = (): SessionRecord => ({
     id,
@@ -96,6 +120,8 @@ export async function supervise(args: string[]): Promise<number> {
     paused,
     restartable: true,
     startedAt,
+    currentModelLabel,
+    currentQuotaScope,
   });
 
   const persist = async (): Promise<SessionRecord> => {
@@ -131,7 +157,14 @@ export async function supervise(args: string[]): Promise<number> {
       if (content.length < logOffset) logOffset = 0;
       const appended = content.slice(logOffset);
       logOffset = content.length;
+      let modelChanged = false;
       for (const line of appended.split(/\r?\n/)) {
+        const modelEvent = parseModelEventLine(line);
+        if (modelEvent) {
+          currentModelLabel = modelEvent.label;
+          currentQuotaScope = modelEvent.scope;
+          modelChanged = true;
+        }
         if (isRequestEventLine(line)) {
           await recordProfileRequest(profileName);
         }
@@ -141,10 +174,17 @@ export async function supervise(args: string[]): Promise<number> {
         }
         const event = parseQuotaEventLine(line);
         if (!event) continue;
-        if (quotaMarked) continue;
-        quotaMarked = true;
-        await recordProfileQuotaExhausted(profileName, event);
+        const scope = currentQuotaScope ?? "unknown";
+        if (quotaMarkedScopes.has(scope)) continue;
+        quotaMarkedScopes.add(scope);
+        await recordProfileQuotaExhausted(profileName, {
+          ...event,
+          scope,
+          modelLabel: currentModelLabel,
+        });
+        triggerAutoSwitch(scope);
       }
+      if (modelChanged) await persist();
     } catch {
       // The log or state file may not exist yet.
     } finally {
@@ -156,7 +196,9 @@ export async function supervise(args: string[]): Promise<number> {
     intentionalStop = false;
     paused = false;
     profileAtStart = (await loadState()).activeProfile;
-    quotaMarked = false;
+    quotaMarkedScopes = new Set<QuotaScope>();
+    currentModelLabel = undefined;
+    currentQuotaScope = undefined;
     const launchArgs = withConversation(args, conversationId);
     if (!launchArgs.some((argument) =>
       argument === "--log-file" || argument.startsWith("--log-file=")

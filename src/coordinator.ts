@@ -1,5 +1,14 @@
 import { spawn } from "node:child_process";
-import { chmod, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import {
@@ -16,6 +25,8 @@ import {
   upsertProfile,
   uniqueProfileName,
   validateProfileName,
+  AutoSwitchMode,
+  effectiveAutoSwitchMode,
 } from "./config.js";
 import { keychain } from "./keychain.js";
 import { detectCredentialEmail } from "./google_auth.js";
@@ -24,7 +35,13 @@ import {
   runningAgy,
   stopProcesses,
 } from "./processes.js";
-import { effectiveProfileStatus, selectNextProfile } from "./selection.js";
+import { QuotaScope } from "./quota.js";
+import {
+  effectiveProfileStatus,
+  selectAutoSwitchProfile,
+  selectNextProfile,
+  shouldAutoSwitchAfterQuota,
+} from "./selection.js";
 import { SessionRecord } from "./session.js";
 
 interface SessionReply {
@@ -32,6 +49,8 @@ interface SessionReply {
   error?: string;
   record?: SessionRecord;
 }
+
+const autoSwitchLockPath = join(runtimeDir, "auto-switch.lock");
 
 function parseJSONPrefix<T>(content: string): T {
   try {
@@ -117,6 +136,40 @@ export async function sessionRecords(): Promise<SessionRecord[]> {
     }
   }
   return records;
+}
+
+export async function activeQuotaScopes(): Promise<QuotaScope[]> {
+  const scopes = new Set<QuotaScope>();
+  for (const record of await sessionRecords()) {
+    const scope = record.currentQuotaScope;
+    if (scope && scope !== "unknown") scopes.add(scope);
+  }
+  return [...scopes];
+}
+
+async function withAutoSwitchLock<T>(operation: () => Promise<T>): Promise<T | undefined> {
+  await ensureDirectories();
+  const acquire = async (): Promise<boolean> => {
+    try {
+      await mkdir(autoSwitchLockPath, { mode: 0o700 });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const lockStat = await stat(autoSwitchLockPath).catch(() => undefined);
+      if (lockStat && Date.now() - lockStat.mtimeMs > 30_000) {
+        await rm(autoSwitchLockPath, { recursive: true, force: true });
+        return await acquire();
+      }
+      return false;
+    }
+  };
+
+  if (!await acquire()) return undefined;
+  try {
+    return await operation();
+  } finally {
+    await rm(autoSwitchLockPath, { recursive: true, force: true });
+  }
 }
 
 export async function pauseAll(): Promise<SessionRecord[]> {
@@ -258,6 +311,7 @@ export async function activateProfile(
 
 export async function switchProfile(name: string): Promise<ProfileSwitchResult> {
   const initialState = await loadState();
+  const quotaScopes = await activeQuotaScopes();
   const profile = initialState.profiles.find((entry) => entry.name === name);
   if (!profile) throw new Error(`Profile not found: ${name}`);
   if (initialState.activeProfile === name) {
@@ -267,7 +321,7 @@ export async function switchProfile(name: string): Promise<ProfileSwitchResult> 
       alreadyActive: true,
     };
   }
-  const status = effectiveProfileStatus(profile);
+  const status = effectiveProfileStatus(profile, new Date(), { quotaScopes });
   if (status !== "ready") {
     throw new Error(`Profile '${name}' is not selectable: ${status}.`);
   }
@@ -285,7 +339,8 @@ export async function switchProfile(name: string): Promise<ProfileSwitchResult> 
 
 export async function switchToNextProfile(): Promise<ProfileSwitchResult> {
   const initialState = await loadState();
-  const initialCandidate = selectNextProfile(initialState);
+  const quotaScopes = await activeQuotaScopes();
+  const initialCandidate = selectNextProfile(initialState, new Date(), { quotaScopes });
   if (initialCandidate.name === initialState.activeProfile) {
     return {
       name: initialCandidate.name,
@@ -299,7 +354,7 @@ export async function switchToNextProfile(): Promise<ProfileSwitchResult> {
   try {
     for (let attempt = 0; attempt < 10000; attempt += 1) {
       const state = await loadState();
-      const candidate = selectNextProfile(state);
+      const candidate = selectNextProfile(state, new Date(), { quotaScopes });
       if (candidate.name === state.activeProfile) {
         return {
           name: candidate.name,
@@ -324,6 +379,57 @@ export async function switchToNextProfile(): Promise<ProfileSwitchResult> {
   } finally {
     await resumeAll(sessions);
   }
+}
+
+export async function setAutoSwitchMode(mode: AutoSwitchMode): Promise<void> {
+  const state = await loadState();
+  state.settings = state.settings ?? {};
+  state.settings.autoSwitchMode = mode;
+  await saveState(state);
+}
+
+export async function autoSwitchAfterQuota(
+  quotaScope: QuotaScope,
+): Promise<ProfileSwitchResult | undefined> {
+  return await withAutoSwitchLock(async () => {
+    const initialState = await loadState();
+    const mode = effectiveAutoSwitchMode(initialState);
+    if (mode === "off") return undefined;
+    const activeProfile = initialState.profiles.find((profile) =>
+      profile.name === initialState.activeProfile
+    );
+    if (!shouldAutoSwitchAfterQuota(activeProfile, mode, quotaScope)) return undefined;
+
+    const initialCandidate = selectAutoSwitchProfile(initialState, mode, quotaScope);
+    const sessions = await pauseAll();
+    const previousCredential = await keychain.readActive().catch(() => undefined);
+    let lastError: Error | undefined;
+    try {
+      for (let attempt = 0; attempt < 10000; attempt += 1) {
+        const state = await loadState();
+        const currentMode = effectiveAutoSwitchMode(state);
+        if (currentMode === "off") return undefined;
+        const candidate = attempt === 0
+          ? initialCandidate
+          : selectAutoSwitchProfile(state, currentMode, quotaScope);
+        try {
+          return await activateProfile(candidate.name, { verify: true });
+        } catch (error) {
+          lastError = error as Error;
+          const profile = (await loadState()).profiles.find((entry) => entry.name === candidate.name);
+          if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
+            throw error;
+          }
+        }
+      }
+      throw lastError ?? new Error("No selectable profile for automatic quota failover.");
+    } catch (error) {
+      if (previousCredential) await keychain.writeActive(previousCredential);
+      throw error;
+    } finally {
+      await resumeAll(sessions);
+    }
+  });
 }
 
 export async function verifyAllProfiles(): Promise<State> {

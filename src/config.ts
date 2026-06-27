@@ -1,6 +1,23 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { QuotaScope } from "./quota.js";
+
+export interface ScopedQuotaRecord {
+  status: "exhausted";
+  resetAt?: string;
+  reason?: string;
+  errorAt?: string;
+  modelLabel?: string;
+}
+
+export type AutoSwitchMode = "off" | "provider-first" | "all-providers";
+
+export const defaultAutoSwitchMode: AutoSwitchMode = "all-providers";
+
+export function effectiveAutoSwitchMode(state: Pick<State, "settings">): AutoSwitchMode {
+  return state.settings?.autoSwitchMode ?? defaultAutoSwitchMode;
+}
 
 export interface ProfileRecord {
   name: string;
@@ -16,6 +33,7 @@ export interface ProfileRecord {
   quotaResetAt?: string;
   quotaStatus?: "unknown" | "available" | "exhausted";
   lastQuotaReason?: string;
+  quotaScopes?: Partial<Record<QuotaScope, ScopedQuotaRecord>>;
   credentialStatus?: "unknown" | "verified" | "mismatch" | "error";
   verifiedEmail?: string;
   credentialVerifiedAt?: string;
@@ -33,6 +51,9 @@ export interface State {
   version: 1;
   activeProfile?: string;
   realAgyPath?: string;
+  settings?: {
+    autoSwitchMode?: AutoSwitchMode;
+  };
   onboarding?: {
     shellIntegrationPromptedAt?: string;
     shellIntegrationInstalledAt?: string;
@@ -105,6 +126,7 @@ export async function upsertProfile(
       existing.quotaResetAt = undefined;
       existing.lastQuotaReason = undefined;
     }
+    clearExpiredScopedQuotas(existing, now);
   } else {
     state.profiles.push({
       name,
@@ -149,6 +171,7 @@ export function markProfileActivated(
     profile.quotaResetAt = undefined;
     profile.lastQuotaReason = undefined;
   }
+  clearExpiredScopedQuotas(profile, now);
 }
 
 export function markProfileRequest(
@@ -165,6 +188,7 @@ export function markProfileRequest(
   profile.lastSuccessfulRequestAt = nowString;
   profile.updatedAt = nowString;
   if (profile.quotaStatus !== "exhausted") profile.quotaStatus = "available";
+  clearExpiredScopedQuotas(profile, now);
   profile.eligibilityStatus = "eligible";
   profile.eligibilityReason = undefined;
   profile.lastEligibilityErrorAt = undefined;
@@ -173,7 +197,7 @@ export function markProfileRequest(
 export function markProfileQuotaExhausted(
   state: State,
   name: string,
-  event: { reason: string; resetAt?: string },
+  event: { reason: string; resetAt?: string; scope?: QuotaScope; modelLabel?: string },
   now = new Date(),
 ): void {
   const profile = state.profiles.find((entry) =>
@@ -181,11 +205,37 @@ export function markProfileQuotaExhausted(
   );
   if (!profile) return;
   const nowString = now.toISOString();
-  profile.quotaStatus = "exhausted";
   profile.lastQuotaErrorAt = nowString;
   profile.lastQuotaReason = event.reason;
-  profile.quotaResetAt = event.resetAt;
+  const scope = event.scope ?? "unknown";
+  profile.quotaScopes = profile.quotaScopes ?? {};
+  profile.quotaScopes[scope] = {
+    status: "exhausted",
+    resetAt: event.resetAt,
+    reason: event.reason,
+    errorAt: nowString,
+    modelLabel: event.modelLabel,
+  };
+  if (scope === "unknown") {
+    profile.quotaStatus = "exhausted";
+    profile.quotaResetAt = event.resetAt;
+  }
   profile.updatedAt = nowString;
+}
+
+export function clearExpiredScopedQuotas(
+  profile: ProfileRecord,
+  now = new Date(),
+): void {
+  if (!profile.quotaScopes) return;
+  for (const [scope, quota] of Object.entries(profile.quotaScopes) as Array<
+    [QuotaScope, ScopedQuotaRecord]
+  >) {
+    if (quota.resetAt && Date.parse(quota.resetAt) <= now.getTime()) {
+      delete profile.quotaScopes[scope];
+    }
+  }
+  if (!Object.keys(profile.quotaScopes).length) delete profile.quotaScopes;
 }
 
 export function markProfileCredentialVerified(
@@ -252,7 +302,7 @@ export function markProfileIneligible(
 
 export async function recordProfileQuotaExhausted(
   name: string,
-  event: { reason: string; resetAt?: string },
+  event: { reason: string; resetAt?: string; scope?: QuotaScope; modelLabel?: string },
 ): Promise<void> {
   const state = await loadState();
   markProfileQuotaExhausted(state, name, event);

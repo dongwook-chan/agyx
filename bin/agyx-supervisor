@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+case "$(uname -s):$(uname -m)" in
+  Darwin:arm64|Darwin:aarch64)
+    target="agyx-supervisor-darwin-arm64"
+    ;;
+  Linux:arm64|Linux:aarch64)
+    target="agyx-supervisor-linux-arm64"
+    ;;
+  *)
+    echo "agyx: unsupported supervisor host: $(uname -s)/$(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+script=$0
+while [ -L "$script" ]; do
+  link=$(readlink "$script")
+  case "$link" in
+    /*) script=$link ;;
+    *) script=$(dirname -- "$script")/$link ;;
+  esac
+done
+
+directory=$(CDPATH= cd -- "$(dirname -- "$script")" && pwd)
+binary="$directory/$target"
+
+if [ -x "$binary" ]; then
+  exec "$binary" "$@"
+fi
+
+if command -v agyx-agy >/dev/null 2>&1; then
+  echo "agyx: native supervisor binary not found: $binary; using Node supervisor fallback." >&2
+  exec agyx-agy "$@"
+fi
+
+echo "agyx: native supervisor binary not found: $binary" >&2
+exit 1

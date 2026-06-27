@@ -1,5 +1,11 @@
 import { ProfileRecord, State } from "./config.js";
-import { effectiveProfileStatus, ProfileRuntimeStatus } from "./selection.js";
+import {
+  effectiveProfileStatus,
+  EffectiveStatusOptions,
+  exhaustedQuotaScopeForOptions,
+  ProfileRuntimeStatus,
+  scopedQuotaResetAt,
+} from "./selection.js";
 
 export interface ProfileView {
   marker: string;
@@ -36,22 +42,39 @@ export function relativeTime(value: string | undefined, now = new Date()): strin
   return delta >= 0 ? `in ${amount}${suffix}` : `${amount}${suffix} ago`;
 }
 
-export function profileStatusText(profile: ProfileRecord, now = new Date()): string {
-  const status = effectiveProfileStatus(profile, now);
+export function profileStatusText(
+  profile: ProfileRecord,
+  now = new Date(),
+  options: EffectiveStatusOptions = {},
+): string {
+  const status = effectiveProfileStatus(profile, now, options);
   if (status === "disabled") return "disabled";
   if (status === "mismatch") return "mismatch";
   if (status === "error") return "auth-error";
   if (status === "ineligible") return "ineligible";
-  if (status === "exhausted") return "quota";
+  if (status === "exhausted") {
+    const exhaustedScope = exhaustedQuotaScopeForOptions(profile, options, now);
+    return exhaustedScope && exhaustedScope !== "unknown" ? `quota:${exhaustedScope}` : "quota";
+  }
+  const scopedQuotaText = Object.keys(profile.quotaScopes ?? {})
+    .filter((scope) => scope !== "unknown")
+    .join(",");
+  if (scopedQuotaText) return `ready/${scopedQuotaText}`;
   return profile.quotaStatus === "available" ? "ready" : "unknown";
 }
 
 export function buildProfileViews(
   state: Pick<State, "activeProfile" | "profiles">,
   now = new Date(),
+  options: EffectiveStatusOptions = {},
 ): ProfileView[] {
   return state.profiles.map((profile, index) => {
-    const runtimeStatus = effectiveProfileStatus(profile, now);
+    const runtimeStatus = effectiveProfileStatus(profile, now, options);
+    const firstScope = options.quotaScope
+      ?? options.quotaScopes?.find((scope) => scope !== "unknown");
+    const resetAt = firstScope && firstScope !== "unknown"
+      ? scopedQuotaResetAt(profile, firstScope, now) ?? profile.quotaResetAt
+      : profile.quotaResetAt;
     const disabledReason = (() => {
       if (runtimeStatus === "ready") return undefined;
       if (runtimeStatus === "mismatch") {
@@ -66,8 +89,12 @@ export function buildProfileViews(
           ?? "account is not eligible for Antigravity; verify it in the browser or login another account";
       }
       if (runtimeStatus === "exhausted") {
-        return profile.quotaResetAt
-          ? `quota resets ${relativeTime(profile.quotaResetAt, now)}`
+        const exhaustedScope = exhaustedQuotaScopeForOptions(profile, options, now);
+        const scopeText = exhaustedScope && exhaustedScope !== "unknown"
+          ? `${exhaustedScope} quota`
+          : "quota";
+        return resetAt
+          ? `${scopeText} resets ${relativeTime(resetAt, now)}`
           : "quota exhausted";
       }
       return "disabled";
@@ -78,8 +105,8 @@ export function buildProfileViews(
       name: profile.name,
       expectedEmail: profile.email ?? "-",
       actualEmail: profile.verifiedEmail ?? "-",
-      status: profileStatusText(profile, now),
-      quotaReset: relativeTime(profile.quotaResetAt, now),
+      status: profileStatusText(profile, now, options),
+      quotaReset: relativeTime(resetAt, now),
       lastRequest: relativeTime(profile.lastRequestAt, now),
       activated: relativeTime(profile.lastActivatedAt, now),
       verified: relativeTime(profile.credentialVerifiedAt ?? profile.credentialMismatchAt, now),

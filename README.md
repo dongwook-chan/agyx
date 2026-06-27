@@ -6,9 +6,22 @@ Keychain credential, and restart each conversation in its original terminal.
 
 ## Requirements
 
-- macOS
+- macOS on Apple Silicon (`darwin/arm64`) or Linux on ARM64 (`linux/arm64`)
 - Node.js 20 or newer
 - Google Antigravity CLI (`agy`)
+
+The npm package intentionally targets ARM64 Unix hosts only. Installation
+aborts on other hosts. The long-running `agy` supervisor runs through
+`bin/agyx-supervisor`, a tiny POSIX launcher that selects and `exec`s the native
+Rust binary for the current host:
+
+- `bin/agyx-supervisor-darwin-arm64`
+- `bin/agyx-supervisor-linux-arm64`
+
+Because the launcher uses `exec`, the long-running process is the Rust
+supervisor itself; Node is not kept alive for managed `agy` sessions. In a local
+development checkout, the launcher falls back to `agyx-agy` when the matching
+native binary has not been built.
 
 ## Install
 
@@ -37,8 +50,11 @@ suppress these prompts.
 The shell integration makes `agy` transparently run as:
 
 ```text
-agyx session -- <all original agy arguments>
+agyx-supervisor <all original agy arguments>
 ```
+
+If the native supervisor binary is not available in a development checkout, the
+shell function falls back to `agyx-agy`, which uses the Node supervisor.
 
 Verify the active terminal with:
 
@@ -46,7 +62,7 @@ Verify the active terminal with:
 type agy
 ```
 
-Expected result: `agy` is a shell function that calls `agyx session`.
+Expected result: `agy` is a shell function that calls `agyx-supervisor`.
 
 All original options are forwarded, including:
 
@@ -103,6 +119,7 @@ agyx list
 agyx use work
 agyx use
 agyx next
+agyx autoswitch
 agyx status
 ```
 
@@ -116,9 +133,9 @@ terminal table. Both show profile metadata:
 - `switches`: how many times agyx selected the profile through login/use/next
 
 `agyx next` uses name-sorted round-robin order, starting after the currently
-active profile. It skips profiles marked `disabled` or currently quota
-exhausted. If a quota reset time has passed, the profile becomes selectable
-again.
+active profile. It skips profiles marked `disabled`, credential-mismatched,
+ineligible, or currently quota exhausted for the active provider scope. If a
+quota reset time has passed, the profile becomes selectable again.
 
 Each supervisor preserves its working directory and original arguments. It also
 extracts the active conversation UUID from the session log and uses
@@ -134,10 +151,42 @@ signals such as `RESOURCE_EXHAUSTED`, HTTP `429`, and `Individual quota
 reached`. When a reset hint such as `Resets in 73h16m27s` is present, agyx stores
 the inferred reset time in profile metadata.
 
-This release records quota state, request attempts, and makes `agyx next` avoid
-exhausted profiles. It does not yet perform an automatic global account switch
-from inside a running session; use `agyx next` after a quota message so the
-switch still happens through the normal pause/switch/resume transaction.
+When the active model can be inferred from the same session log, quota is stored
+per provider scope: `claude`, `gemini`, or `gpt-oss`. If no reliable model
+context exists, the quota event is stored as `unknown` and treated as
+profile-wide.
+
+Automatic quota failover is configured with:
+
+```bash
+agyx autoswitch
+agyx autoswitch all-providers
+agyx autoswitch provider-first
+agyx autoswitch off
+```
+
+The default is `all-providers`: agyx waits until both Claude and Gemini quota are
+exhausted for the active profile before switching accounts. `provider-first`
+switches as soon as the current provider scope is exhausted. Automatic switching
+uses the same global pause/switch/resume transaction as `agyx next`.
+
+## Native supervisor build
+
+For local native packaging on the current host:
+
+```bash
+npm run build:native
+npm run check:native-package
+```
+
+`npm pack` and `npm publish` run `check:native-package` and fail if the launcher
+or the current host's native binary is missing or not executable.
+
+Release CI should build every supported binary and then run:
+
+```bash
+AGYX_REQUIRE_ALL_NATIVE=1 npm run check:native-package
+```
 
 ## Security
 

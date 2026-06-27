@@ -1,0 +1,92 @@
+name: native
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/native.yml"
+      - "bin/agyx-supervisor"
+      - "native/**"
+      - "package-lock.json"
+      - "package.json"
+      - "scripts/**"
+      - "src/**"
+      - "test/**"
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-arm64
+            runner: macos-26
+            binary: agyx-supervisor-darwin-arm64
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            binary: agyx-supervisor-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Ensure Rust
+        shell: bash
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          cargo --version
+          rustc --version
+
+      - run: npm ci
+
+      - run: npm run build:native
+
+      - name: Verify expected binary
+        shell: bash
+        run: |
+          test -x "bin/${{ matrix.binary }}"
+          file "bin/${{ matrix.binary }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: bin/${{ matrix.binary }}
+          if-no-files-found: error
+
+  package:
+    name: verify package with all native binaries
+    runs-on: ubuntu-24.04-arm
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: bin
+          merge-multiple: true
+
+      - name: Prepare native binaries
+        run: chmod +x bin/agyx-supervisor bin/agyx-supervisor-*
+
+      - run: npm run build
+
+      - run: AGYX_REQUIRE_ALL_NATIVE=1 npm run check:native-package
+
+      - run: npm pack --dry-run

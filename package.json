@@ -5,17 +5,25 @@
   "type": "module",
   "bin": {
     "agyx": "dist/src/cli.js",
-    "agyx-agy": "dist/src/shim.js"
+    "agyx-agy": "dist/src/shim.js",
+    "agyx-supervisor": "bin/agyx-supervisor"
   },
   "files": [
+    "bin/agyx-supervisor",
+    "bin/agyx-supervisor-darwin-arm64",
+    "bin/agyx-supervisor-linux-arm64",
     "dist/src",
+    "scripts/*.cjs",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/src/cli.js dist/src/shim.js",
+    "build": "tsc -p tsconfig.json && chmod +x dist/src/cli.js dist/src/shim.js bin/agyx-supervisor",
+    "build:native": "node scripts/build-native.cjs",
+    "check:native-package": "node scripts/check-native-package.cjs",
     "clean": "rm -rf dist",
-    "prepack": "npm run clean && npm run build",
+    "preinstall": "node scripts/preinstall.cjs",
+    "prepack": "npm run clean && npm run build && AGYX_REQUIRE_ALL_NATIVE=1 npm run check:native-package",
     "test": "npm run clean && npm run build && node --test dist/test/*.test.js"
   },
   "keywords": [
@@ -31,7 +39,11 @@
     "node": ">=20"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
   ],
   "repository": {
     "type": "git",

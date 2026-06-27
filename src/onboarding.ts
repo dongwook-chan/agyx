@@ -85,7 +85,7 @@ async function promptGithubStar(): Promise<void> {
 export async function maybeRunOnboarding(command: string): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return;
   if (process.env.AGYX_NO_ONBOARDING === "1") return;
-  if (["session", "shell-init", "_activate"].includes(command)) return;
+  if (["session", "shell-init", "_activate", "_auto-next"].includes(command)) return;
 
   if (command !== "install") await promptShellIntegration();
   await promptGithubStar();

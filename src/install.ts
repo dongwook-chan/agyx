@@ -15,7 +15,15 @@ export function shellIntegrationPath(): string {
 }
 
 export function shellInit(): string {
-  return `agy() { command agyx session -- "$@"; }`;
+  return [
+    "agy() {",
+    "  if command -v agyx-supervisor >/dev/null 2>&1; then",
+    "    command agyx-supervisor \"$@\"",
+    "  else",
+    "    command agyx-agy \"$@\"",
+    "  fi",
+    "}",
+  ].join("\n");
 }
 
 export async function shellIntegrationInstalled(): Promise<boolean> {
