@@ -10,6 +10,8 @@ Keychain credential, and restart each conversation in its original terminal.
 - Node.js 20 or newer
 - Google Antigravity CLI (`agy`)
 
+On macOS, credentials are saved securely in the native system Keychain. On Linux, if a system keyring service is not available (such as in headless or SSH environments), agyx automatically falls back to a file-based credential store (stored under `~/.config/agyx/credentials.json` with secure `0600` permissions).
+
 The npm package intentionally targets ARM64 Unix hosts only. Installation
 aborts on other hosts. The long-running `agy` supervisor runs through
 `bin/agyx-supervisor`, a tiny POSIX launcher that selects and `exec`s the native
@@ -190,13 +192,12 @@ AGYX_REQUIRE_ALL_NATIVE=1 npm run check:native-package
 
 ## Security
 
-- Credentials remain in macOS Keychain.
-- Profile metadata only is stored in `~/.config/agyx/state.json` with mode 0600.
-- Account changes wait for supervised sessions to stop before modifying the
-  shared `gemini/antigravity` Keychain item.
+- **macOS**: Credentials remain securely stored in the native macOS Keychain.
+- **Linux**: Credentials are saved in the system keyring if available. In headless, SSH, or server environments where no DBus/secret-service keyring is running, agyx automatically falls back to storing credentials in a local JSON file (`~/.config/agyx/credentials.json`) set to secure owner-only read/write permission (`0600`).
+- Profile metadata (without credentials) is stored in `~/.config/agyx/state.json` with `0600` permissions.
+- Account changes wait for supervised sessions to stop before modifying the shared Keychain or credential file to avoid corruption.
 
-macOS may display a Keychain access prompt the first time an account is saved or
-switched.
+macOS may display a Keychain access prompt the first time an account is saved or switched.
 
 ## Current limitation
 
