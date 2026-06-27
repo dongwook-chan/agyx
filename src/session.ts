@@ -222,8 +222,13 @@ export async function supervise(args: string[]): Promise<number> {
       child = undefined;
       await persist();
       if (!intentionalStop && !paused) {
-        await shutdown();
-        process.exit(finalCode);
+        if (finalCode !== 0) {
+          console.error(`\n[agyx] Session disconnected unexpectedly (exit code ${finalCode}). Restarting...`);
+          setTimeout(() => { void startChild(); }, 1000);
+        } else {
+          await shutdown();
+          process.exit(finalCode);
+        }
       }
     });
   };

@@ -2,6 +2,7 @@ import { findRealAgy, run } from "./processes.js";
 import { configDir } from "./config.js";
 import { join } from "node:path";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 
 const security = "/usr/bin/security";
 const activeService = "gemini";
@@ -11,6 +12,11 @@ const vaultService = "agyx";
 const isDarwin = process.platform === "darwin";
 
 async function getCredentialFilePath(service: string, account: string): Promise<string> {
+  if (service === activeService && account === activeAccount) {
+    const parentDir = join(homedir(), ".gemini", "antigravity-cli");
+    await mkdir(parentDir, { recursive: true, mode: 0o700 });
+    return join(parentDir, "antigravity-oauth-token");
+  }
   const credsDir = join(configDir, "credentials");
   await mkdir(credsDir, { recursive: true, mode: 0o700 });
   const safeService = encodeURIComponent(service);
