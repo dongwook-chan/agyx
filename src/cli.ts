@@ -12,6 +12,7 @@ import {
   switchProfile,
   switchToNextProfile,
   verifyAllProfiles,
+  withAuthSwitchLock,
 } from "./coordinator.js";
 import {
   installShellIntegration,
@@ -114,42 +115,46 @@ function parseQuotaScope(value: string | undefined): QuotaScope {
 }
 
 async function removeProfile(name: string): Promise<void> {
-  validateProfileName(name);
-  await keychain.deleteProfile(name);
-  const state = await loadState();
-  state.profiles = state.profiles.filter((profile) => profile.name !== name);
-  if (state.activeProfile === name) state.activeProfile = undefined;
-  await saveState(state);
+  await withAuthSwitchLock(async () => {
+    validateProfileName(name);
+    await keychain.deleteProfile(name);
+    const state = await loadState();
+    state.profiles = state.profiles.filter((profile) => profile.name !== name);
+    if (state.activeProfile === name) state.activeProfile = undefined;
+    await saveState(state);
+  });
 }
 
 async function renameProfile(oldNameInput: string, newNameInput: string): Promise<boolean> {
-  const oldName = validateProfileName(oldNameInput);
-  const newName = validateProfileName(newNameInput.trim());
-  if (oldName === newName) return false;
+  return await withAuthSwitchLock(async () => {
+    const oldName = validateProfileName(oldNameInput);
+    const newName = validateProfileName(newNameInput.trim());
+    if (oldName === newName) return false;
 
-  const state = await loadState();
-  const profile = state.profiles.find((entry) => entry.name === oldName);
-  if (!profile) throw new Error(`Profile not found: ${oldName}`);
-  if (state.profiles.some((entry) =>
-    entry !== profile
-    && (entry.name === newName || entry.previousNames?.includes(newName))
-  )) {
-    throw new Error(`Profile already exists: ${newName}`);
-  }
+    const state = await loadState();
+    const profile = state.profiles.find((entry) => entry.name === oldName);
+    if (!profile) throw new Error(`Profile not found: ${oldName}`);
+    if (state.profiles.some((entry) =>
+      entry !== profile
+      && (entry.name === newName || entry.previousNames?.includes(newName))
+    )) {
+      throw new Error(`Profile already exists: ${newName}`);
+    }
 
-  const credential = await keychain.readProfile(oldName);
-  await keychain.writeProfile(newName, credential);
-  const previousNames = new Set(profile.previousNames ?? []);
-  previousNames.delete(newName);
-  previousNames.add(oldName);
-  profile.previousNames = [...previousNames].sort();
-  profile.name = newName;
-  profile.updatedAt = new Date().toISOString();
-  if (state.activeProfile === oldName) state.activeProfile = newName;
-  state.profiles.sort((left, right) => left.name.localeCompare(right.name));
-  await saveState(state);
-  await keychain.deleteProfile(oldName);
-  return true;
+    const credential = await keychain.readProfile(oldName);
+    await keychain.writeProfile(newName, credential);
+    const previousNames = new Set(profile.previousNames ?? []);
+    previousNames.delete(newName);
+    previousNames.add(oldName);
+    profile.previousNames = [...previousNames].sort();
+    profile.name = newName;
+    profile.updatedAt = new Date().toISOString();
+    if (state.activeProfile === oldName) state.activeProfile = newName;
+    state.profiles.sort((left, right) => left.name.localeCompare(right.name));
+    await saveState(state);
+    await keychain.deleteProfile(oldName);
+    return true;
+  });
 }
 
 async function confirmAndRemoveProfile(name: string): Promise<boolean> {

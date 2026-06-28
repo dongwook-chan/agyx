@@ -51,6 +51,12 @@ interface SessionReply {
 }
 
 const autoSwitchLockPath = join(runtimeDir, "auto-switch.lock");
+const authSwitchLockPath = join(runtimeDir, "auth-switch.lock");
+let authSwitchLockDepth = 0;
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function parseJSONPrefix<T>(content: string): T {
   try {
@@ -172,6 +178,50 @@ async function withAutoSwitchLock<T>(operation: () => Promise<T>): Promise<T | u
   }
 }
 
+export async function withAuthSwitchLock<T>(
+  operation: () => Promise<T>,
+  options: { timeoutMs?: number; staleMs?: number } = {},
+): Promise<T> {
+  if (authSwitchLockDepth > 0) return await operation();
+  await ensureDirectories();
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000;
+  const staleMs = options.staleMs ?? 30 * 60_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    try {
+      await mkdir(authSwitchLockPath, { mode: 0o700 });
+      await writeFile(
+        join(authSwitchLockPath, "owner"),
+        `${process.pid}\n${new Date().toISOString()}\n`,
+        { mode: 0o600 },
+      );
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const lockStat = await stat(authSwitchLockPath).catch(() => undefined);
+      if (lockStat && Date.now() - lockStat.mtimeMs > staleMs) {
+        await rm(authSwitchLockPath, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("Timed out waiting for agyx auth switch lock.");
+      }
+      await sleep(100);
+    }
+  }
+
+  authSwitchLockDepth += 1;
+  try {
+    return await operation();
+  } finally {
+    authSwitchLockDepth -= 1;
+    if (authSwitchLockDepth === 0) {
+      await rm(authSwitchLockPath, { recursive: true, force: true });
+    }
+  }
+}
+
 export async function pauseAll(): Promise<SessionRecord[]> {
   const records = await sessionRecords();
   const paused: SessionRecord[] = [];
@@ -242,19 +292,21 @@ export async function saveCurrent(
   nameInput?: string,
   explicitEmail?: string,
 ): Promise<ProfileCaptureResult> {
-  const state = await loadState();
-  const activeProfileEmail = state.profiles.find(
-    (profile) => profile.name === state.activeProfile,
-  )?.email;
-  const probeLogPath = join(logDir, `email-probe-${Date.now()}.log`);
-  const email = explicitEmail
-    ?? await detectActiveEmail(probeLogPath)
-    ?? (nameInput ? activeProfileEmail : undefined);
-  const name = resolveProfileName(state, nameInput, email, "save");
-  const credential = await keychain.readActive();
-  await keychain.writeProfile(name, credential);
-  await upsertProfile(name, email, true, false);
-  return { name, email };
+  return await withAuthSwitchLock(async () => {
+    const state = await loadState();
+    const activeProfileEmail = state.profiles.find(
+      (profile) => profile.name === state.activeProfile,
+    )?.email;
+    const probeLogPath = join(logDir, `email-probe-${Date.now()}.log`);
+    const email = explicitEmail
+      ?? await detectActiveEmail(probeLogPath)
+      ?? (nameInput ? activeProfileEmail : undefined);
+    const name = resolveProfileName(state, nameInput, email, "save");
+    const credential = await keychain.readActive();
+    await keychain.writeProfile(name, credential);
+    await upsertProfile(name, email, true, false);
+    return { name, email };
+  });
 }
 
 async function verifyActiveCredential(
@@ -296,89 +348,95 @@ export async function activateProfile(
   nameInput: string,
   options: { verify?: boolean } = {},
 ): Promise<ProfileSwitchResult> {
-  const name = validateProfileName(nameInput);
-  const state = await loadState();
-  if (!state.profiles.some((profile) => profile.name === name)) {
-    throw new Error(`Profile not found: ${name}`);
-  }
-  const credential = await keychain.readProfile(name);
-  await keychain.writeActive(credential);
-  const email = options.verify ? await verifyActiveCredential(state, name) : undefined;
-  markProfileActivated(state, name);
-  await saveState(state);
-  return { name, email };
+  return await withAuthSwitchLock(async () => {
+    const name = validateProfileName(nameInput);
+    const state = await loadState();
+    if (!state.profiles.some((profile) => profile.name === name)) {
+      throw new Error(`Profile not found: ${name}`);
+    }
+    const credential = await keychain.readProfile(name);
+    await keychain.writeActive(credential);
+    const email = options.verify ? await verifyActiveCredential(state, name) : undefined;
+    markProfileActivated(state, name);
+    await saveState(state);
+    return { name, email };
+  });
 }
 
 export async function switchProfile(name: string): Promise<ProfileSwitchResult> {
-  const initialState = await loadState();
-  const quotaScopes = await activeQuotaScopes();
-  const profile = initialState.profiles.find((entry) => entry.name === name);
-  if (!profile) throw new Error(`Profile not found: ${name}`);
-  if (initialState.activeProfile === name) {
-    return {
-      name,
-      email: profile.email ?? profile.verifiedEmail,
-      alreadyActive: true,
-    };
-  }
-  const status = effectiveProfileStatus(profile, new Date(), { quotaScopes });
-  if (status !== "ready") {
-    throw new Error(`Profile '${name}' is not selectable: ${status}.`);
-  }
-  const sessions = await pauseAll();
-  const previousCredential = await keychain.readActive().catch(() => undefined);
-  try {
-    return await activateProfile(name, { verify: true });
-  } catch (error) {
-    if (previousCredential) await keychain.writeActive(previousCredential);
-    throw error;
-  } finally {
-    await resumeAll(sessions);
-  }
+  return await withAuthSwitchLock(async () => {
+    const initialState = await loadState();
+    const quotaScopes = await activeQuotaScopes();
+    const profile = initialState.profiles.find((entry) => entry.name === name);
+    if (!profile) throw new Error(`Profile not found: ${name}`);
+    if (initialState.activeProfile === name) {
+      return {
+        name,
+        email: profile.email ?? profile.verifiedEmail,
+        alreadyActive: true,
+      };
+    }
+    const status = effectiveProfileStatus(profile, new Date(), { quotaScopes });
+    if (status !== "ready") {
+      throw new Error(`Profile '${name}' is not selectable: ${status}.`);
+    }
+    const sessions = await pauseAll();
+    const previousCredential = await keychain.readActive().catch(() => undefined);
+    try {
+      return await activateProfile(name, { verify: true });
+    } catch (error) {
+      if (previousCredential) await keychain.writeActive(previousCredential);
+      throw error;
+    } finally {
+      await resumeAll(sessions);
+    }
+  });
 }
 
 export async function switchToNextProfile(): Promise<ProfileSwitchResult> {
-  const initialState = await loadState();
-  const quotaScopes = await activeQuotaScopes();
-  const initialCandidate = selectNextProfile(initialState, new Date(), { quotaScopes });
-  if (initialCandidate.name === initialState.activeProfile) {
-    return {
-      name: initialCandidate.name,
-      email: initialCandidate.email ?? initialCandidate.verifiedEmail,
-      alreadyActive: true,
-    };
-  }
-  const sessions = await pauseAll();
-  const previousCredential = await keychain.readActive().catch(() => undefined);
-  let lastError: Error | undefined;
-  try {
-    for (let attempt = 0; attempt < 10000; attempt += 1) {
-      const state = await loadState();
-      const candidate = selectNextProfile(state, new Date(), { quotaScopes });
-      if (candidate.name === state.activeProfile) {
-        return {
-          name: candidate.name,
-          email: candidate.email ?? candidate.verifiedEmail,
-          alreadyActive: true,
-        };
-      }
-      try {
-        return await activateProfile(candidate.name, { verify: true });
-      } catch (error) {
-        lastError = error as Error;
-        const profile = (await loadState()).profiles.find((entry) => entry.name === candidate.name);
-        if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
-          throw error;
+  return await withAuthSwitchLock(async () => {
+    const initialState = await loadState();
+    const quotaScopes = await activeQuotaScopes();
+    const initialCandidate = selectNextProfile(initialState, new Date(), { quotaScopes });
+    if (initialCandidate.name === initialState.activeProfile) {
+      return {
+        name: initialCandidate.name,
+        email: initialCandidate.email ?? initialCandidate.verifiedEmail,
+        alreadyActive: true,
+      };
+    }
+    const sessions = await pauseAll();
+    const previousCredential = await keychain.readActive().catch(() => undefined);
+    let lastError: Error | undefined;
+    try {
+      for (let attempt = 0; attempt < 10000; attempt += 1) {
+        const state = await loadState();
+        const candidate = selectNextProfile(state, new Date(), { quotaScopes });
+        if (candidate.name === state.activeProfile) {
+          return {
+            name: candidate.name,
+            email: candidate.email ?? candidate.verifiedEmail,
+            alreadyActive: true,
+          };
+        }
+        try {
+          return await activateProfile(candidate.name, { verify: true });
+        } catch (error) {
+          lastError = error as Error;
+          const profile = (await loadState()).profiles.find((entry) => entry.name === candidate.name);
+          if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
+            throw error;
+          }
         }
       }
+      throw lastError ?? new Error("No selectable profiles.");
+    } catch (error) {
+      if (previousCredential) await keychain.writeActive(previousCredential);
+      throw error;
+    } finally {
+      await resumeAll(sessions);
     }
-    throw lastError ?? new Error("No selectable profiles.");
-  } catch (error) {
-    if (previousCredential) await keychain.writeActive(previousCredential);
-    throw error;
-  } finally {
-    await resumeAll(sessions);
-  }
+  });
 }
 
 export async function setAutoSwitchMode(mode: AutoSwitchMode): Promise<void> {
@@ -392,78 +450,82 @@ export async function autoSwitchAfterQuota(
   quotaScope: QuotaScope,
 ): Promise<ProfileSwitchResult | undefined> {
   return await withAutoSwitchLock(async () => {
-    const initialState = await loadState();
-    const mode = effectiveAutoSwitchMode(initialState);
-    if (mode === "off") return undefined;
-    const activeProfile = initialState.profiles.find((profile) =>
-      profile.name === initialState.activeProfile
-    );
-    if (!shouldAutoSwitchAfterQuota(activeProfile, mode, quotaScope)) return undefined;
+    return await withAuthSwitchLock(async () => {
+      const initialState = await loadState();
+      const mode = effectiveAutoSwitchMode(initialState);
+      if (mode === "off") return undefined;
+      const activeProfile = initialState.profiles.find((profile) =>
+        profile.name === initialState.activeProfile
+      );
+      if (!shouldAutoSwitchAfterQuota(activeProfile, mode, quotaScope)) return undefined;
 
-    const initialCandidate = selectAutoSwitchProfile(initialState, mode, quotaScope);
-    const sessions = await pauseAll();
-    const previousCredential = await keychain.readActive().catch(() => undefined);
-    let lastError: Error | undefined;
-    try {
-      for (let attempt = 0; attempt < 10000; attempt += 1) {
-        const state = await loadState();
-        const currentMode = effectiveAutoSwitchMode(state);
-        if (currentMode === "off") return undefined;
-        const candidate = attempt === 0
-          ? initialCandidate
-          : selectAutoSwitchProfile(state, currentMode, quotaScope);
-        try {
-          return await activateProfile(candidate.name, { verify: true });
-        } catch (error) {
-          lastError = error as Error;
-          const profile = (await loadState()).profiles.find((entry) => entry.name === candidate.name);
-          if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
-            throw error;
+      const initialCandidate = selectAutoSwitchProfile(initialState, mode, quotaScope);
+      const sessions = await pauseAll();
+      const previousCredential = await keychain.readActive().catch(() => undefined);
+      let lastError: Error | undefined;
+      try {
+        for (let attempt = 0; attempt < 10000; attempt += 1) {
+          const state = await loadState();
+          const currentMode = effectiveAutoSwitchMode(state);
+          if (currentMode === "off") return undefined;
+          const candidate = attempt === 0
+            ? initialCandidate
+            : selectAutoSwitchProfile(state, currentMode, quotaScope);
+          try {
+            return await activateProfile(candidate.name, { verify: true });
+          } catch (error) {
+            lastError = error as Error;
+            const profile = (await loadState()).profiles.find((entry) => entry.name === candidate.name);
+            if (!profile || !["mismatch", "error"].includes(profile.credentialStatus ?? "")) {
+              throw error;
+            }
           }
         }
+        throw lastError ?? new Error("No selectable profile for automatic quota failover.");
+      } catch (error) {
+        if (previousCredential) await keychain.writeActive(previousCredential);
+        throw error;
+      } finally {
+        await resumeAll(sessions);
       }
-      throw lastError ?? new Error("No selectable profile for automatic quota failover.");
-    } catch (error) {
-      if (previousCredential) await keychain.writeActive(previousCredential);
-      throw error;
-    } finally {
-      await resumeAll(sessions);
-    }
+    });
   });
 }
 
 export async function verifyAllProfiles(): Promise<State> {
-  const sessions = await pauseAll();
-  const previousCredential = await keychain.readActive().catch(() => undefined);
-  try {
-    const names = (await loadState()).profiles.map((profile) => profile.name);
-    for (const name of names) {
-      const state = await loadState();
-      if (!state.profiles.some((profile) => profile.name === name)) continue;
-      try {
-        const credential = await keychain.readProfile(name);
-        await keychain.writeActive(credential);
-        await verifyActiveCredential(state, name);
-        await saveState(state);
-      } catch (error) {
-        const currentState = await loadState();
-        const profile = currentState.profiles.find((entry) => entry.name === name);
-        if (profile && profile.credentialStatus !== "mismatch") {
-          markProfileCredentialMismatch(
-            currentState,
-            name,
-            undefined,
-            profile.email,
-          );
-          await saveState(currentState);
+  return await withAuthSwitchLock(async () => {
+    const sessions = await pauseAll();
+    const previousCredential = await keychain.readActive().catch(() => undefined);
+    try {
+      const names = (await loadState()).profiles.map((profile) => profile.name);
+      for (const name of names) {
+        const state = await loadState();
+        if (!state.profiles.some((profile) => profile.name === name)) continue;
+        try {
+          const credential = await keychain.readProfile(name);
+          await keychain.writeActive(credential);
+          await verifyActiveCredential(state, name);
+          await saveState(state);
+        } catch (error) {
+          const currentState = await loadState();
+          const profile = currentState.profiles.find((entry) => entry.name === name);
+          if (profile && profile.credentialStatus !== "mismatch") {
+            markProfileCredentialMismatch(
+              currentState,
+              name,
+              undefined,
+              profile.email,
+            );
+            await saveState(currentState);
+          }
         }
       }
+      return await loadState();
+    } finally {
+      if (previousCredential) await keychain.writeActive(previousCredential);
+      await resumeAll(sessions);
     }
-    return await loadState();
-  } finally {
-    if (previousCredential) await keychain.writeActive(previousCredential);
-    await resumeAll(sessions);
-  }
+  });
 }
 
 export function detectEmail(content: string): string | undefined {
@@ -561,31 +623,33 @@ export async function loginProfile(
   explicitEmail?: string,
   resume = true,
 ): Promise<ProfileCaptureResult> {
-  const sessions = await pauseAll();
-  const state = await loadState();
-  const previousCredential = await keychain.readActive().catch(() => undefined);
-  if (state.activeProfile && previousCredential) {
-    await keychain.writeProfile(state.activeProfile, previousCredential);
-  }
+  return await withAuthSwitchLock(async () => {
+    const sessions = await pauseAll();
+    const state = await loadState();
+    const previousCredential = await keychain.readActive().catch(() => undefined);
+    if (state.activeProfile && previousCredential) {
+      await keychain.writeProfile(state.activeProfile, previousCredential);
+    }
 
-  const logPath = join(logDir, `login-${Date.now()}.log`);
-  try {
-    await keychain.deleteActive();
-    console.log("Complete Google sign-in in the browser. agyx will continue automatically.");
-    const detectedEmail = await interactiveLogin(logPath);
-    const credential = await keychain.readActive().catch(() => undefined);
-    if (!credential) throw new Error("Login ended without creating an agy credential.");
-    const email = explicitEmail ?? detectedEmail;
-    const name = resolveProfileName(await loadState(), nameInput, email, "login");
-    await keychain.writeProfile(name, credential);
-    await upsertProfile(name, email, true);
-    console.log(`Captured and activated profile '${name}'.`);
-    return { name, email };
-  } catch (error) {
-    if (previousCredential) await keychain.writeActive(previousCredential);
-    await saveState(state);
-    throw error;
-  } finally {
-    if (resume) await resumeAll(sessions);
-  }
+    const logPath = join(logDir, `login-${Date.now()}.log`);
+    try {
+      await keychain.deleteActive();
+      console.log("Complete Google sign-in in the browser. agyx will continue automatically.");
+      const detectedEmail = await interactiveLogin(logPath);
+      const credential = await keychain.readActive().catch(() => undefined);
+      if (!credential) throw new Error("Login ended without creating an agy credential.");
+      const email = explicitEmail ?? detectedEmail;
+      const name = resolveProfileName(await loadState(), nameInput, email, "login");
+      await keychain.writeProfile(name, credential);
+      await upsertProfile(name, email, true);
+      console.log(`Captured and activated profile '${name}'.`);
+      return { name, email };
+    } catch (error) {
+      if (previousCredential) await keychain.writeActive(previousCredential);
+      await saveState(state);
+      throw error;
+    } finally {
+      if (resume) await resumeAll(sessions);
+    }
+  });
 }

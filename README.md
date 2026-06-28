@@ -139,6 +139,11 @@ active profile. It skips profiles marked `disabled`, credential-mismatched,
 ineligible, or currently quota exhausted for the active provider scope. If a
 quota reset time has passed, the profile becomes selectable again.
 
+Account-changing commands (`save`, `login`, `use`, `next`, `remove`, `rename`,
+`list --verify`, and automatic quota failover) share a global auth switch lock,
+so concurrent wrappers do not overwrite the active Keychain credential mid
+transaction.
+
 Each supervisor preserves its working directory and original arguments. It also
 extracts the active conversation UUID from the session log and uses
 `agy --conversation <UUID>` when restarting.
