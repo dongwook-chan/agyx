@@ -25,6 +25,12 @@ export function effectiveYoloMode(state: Pick<State, "settings">): boolean {
   return state.settings?.yolo ?? defaultYoloMode;
 }
 
+export const defaultAllowIneligibleActivation = true;
+
+export function effectiveAllowIneligibleActivation(state: Pick<State, "settings">): boolean {
+  return state.settings?.allowIneligibleActivation ?? defaultAllowIneligibleActivation;
+}
+
 export interface ProfileRecord {
   name: string;
   previousNames?: string[];
@@ -60,6 +66,7 @@ export interface State {
   settings?: {
     autoSwitchMode?: AutoSwitchMode;
     yolo?: boolean;
+    allowIneligibleActivation?: boolean;
   };
   onboarding?: {
     shellIntegrationPromptedAt?: string;

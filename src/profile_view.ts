@@ -1,8 +1,13 @@
-import { ProfileRecord, State } from "./config.js";
+import {
+  effectiveAllowIneligibleActivation,
+  ProfileRecord,
+  State,
+} from "./config.js";
 import {
   effectiveProfileStatus,
   EffectiveStatusOptions,
   exhaustedQuotaScopeForOptions,
+  isProfileSelectable,
   ProfileRuntimeStatus,
   scopedQuotaResetAt,
 } from "./selection.js";
@@ -64,14 +69,20 @@ export function profileStatusText(
 }
 
 export function buildProfileViews(
-  state: Pick<State, "activeProfile" | "profiles">,
+  state: Pick<State, "activeProfile" | "profiles" | "settings">,
   now = new Date(),
   options: EffectiveStatusOptions = {},
 ): ProfileView[] {
+  const effectiveOptions: EffectiveStatusOptions = {
+    ...options,
+    allowIneligibleActivation: options.allowIneligibleActivation
+      ?? effectiveAllowIneligibleActivation(state),
+  };
   return state.profiles.map((profile, index) => {
-    const runtimeStatus = effectiveProfileStatus(profile, now, options);
-    const firstScope = options.quotaScope
-      ?? options.quotaScopes?.find((scope) => scope !== "unknown");
+    const runtimeStatus = effectiveProfileStatus(profile, now, effectiveOptions);
+    const selectable = isProfileSelectable(profile, now, effectiveOptions);
+    const firstScope = effectiveOptions.quotaScope
+      ?? effectiveOptions.quotaScopes?.find((scope) => scope !== "unknown");
     const resetAt = firstScope && firstScope !== "unknown"
       ? scopedQuotaResetAt(profile, firstScope, now) ?? profile.quotaResetAt
       : profile.quotaResetAt;
@@ -89,7 +100,7 @@ export function buildProfileViews(
           ?? "account is not eligible for Antigravity; verify it in the browser or login another account";
       }
       if (runtimeStatus === "exhausted") {
-        const exhaustedScope = exhaustedQuotaScopeForOptions(profile, options, now);
+        const exhaustedScope = exhaustedQuotaScopeForOptions(profile, effectiveOptions, now);
         const scopeText = exhaustedScope && exhaustedScope !== "unknown"
           ? `${exhaustedScope} quota`
           : "quota";
@@ -105,13 +116,13 @@ export function buildProfileViews(
       name: profile.name,
       expectedEmail: profile.email ?? "-",
       actualEmail: profile.verifiedEmail ?? "-",
-      status: profileStatusText(profile, now, options),
+      status: profileStatusText(profile, now, effectiveOptions),
       quotaReset: relativeTime(resetAt, now),
       lastRequest: relativeTime(profile.lastRequestAt, now),
       activated: relativeTime(profile.lastActivatedAt, now),
       verified: relativeTime(profile.credentialVerifiedAt ?? profile.credentialMismatchAt, now),
       switches: String(profile.selectionCount ?? 0),
-      selectable: runtimeStatus === "ready",
+      selectable,
       runtimeStatus,
       disabledReason,
       profile,

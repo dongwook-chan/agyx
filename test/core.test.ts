@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { detectEmail } from "../src/coordinator.js";
 import {
+  effectiveAllowIneligibleActivation,
   effectiveAutoSwitchMode,
   markProfileActivated,
   markProfileCredentialMismatch,
@@ -80,7 +81,17 @@ test("default autoswitch mode is all-providers", () => {
   );
 });
 
-test("parses and blocks ineligible Antigravity accounts", () => {
+test("default ineligible activation mode is allow", () => {
+  assert.equal(effectiveAllowIneligibleActivation({}), true);
+  assert.equal(
+    effectiveAllowIneligibleActivation({
+      settings: { allowIneligibleActivation: false },
+    }),
+    false,
+  );
+});
+
+test("parses and marks ineligible Antigravity accounts", () => {
   const event = parseEligibilityEventLine(
     "W server_oauth.go:99] Account ineligible: Your current account is not eligible for Antigravity. Verify your account to continue.",
   );
@@ -106,7 +117,7 @@ test("parses and blocks ineligible Antigravity accounts", () => {
   assert.equal(state.activeProfile, "a");
   assert.equal(views[0]!.marker, "*");
   assert.equal(views[0]!.status, "ineligible");
-  assert.equal(views[0]!.selectable, false);
+  assert.equal(views[0]!.selectable, true);
 });
 
 test("credential mismatch reconciles active profile by actual credential identity", () => {
@@ -306,6 +317,79 @@ test("skips credential mismatch profiles when selecting next", () => {
     }, now).name,
     "c",
   );
+});
+
+test("ineligible profiles are selectable unless blocked by settings", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "available",
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "available",
+        eligibilityStatus: "ineligible",
+      },
+      {
+        name: "c",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaStatus: "available",
+      },
+    ],
+  };
+
+  assert.equal(selectNextProfile(state, now).name, "b");
+  assert.equal(buildProfileViews(state, now)[1]!.selectable, true);
+
+  state.settings = { allowIneligibleActivation: false };
+
+  assert.equal(selectNextProfile(state, now).name, "c");
+  assert.equal(buildProfileViews(state, now)[1]!.selectable, false);
+});
+
+test("auto switch follows ineligible activation setting", () => {
+  const now = new Date("2026-06-26T00:00:00.000Z");
+  const state: State = {
+    version: 1,
+    activeProfile: "a",
+    profiles: [
+      {
+        name: "a",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        quotaScopes: {
+          claude: { status: "exhausted" },
+          gemini: { status: "exhausted" },
+        },
+      },
+      {
+        name: "b",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        eligibilityStatus: "ineligible",
+      },
+      {
+        name: "c",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    ],
+  };
+
+  assert.equal(selectAutoSwitchProfile(state, "all-providers", "claude", now).name, "b");
+
+  state.settings = { allowIneligibleActivation: false };
+
+  assert.equal(selectAutoSwitchProfile(state, "all-providers", "claude", now).name, "c");
 });
 
 test("builds one shared profile view for list and picker", () => {

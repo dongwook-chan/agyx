@@ -7,6 +7,7 @@ import {
   pauseAll,
   resumeAll,
   saveCurrent,
+  setAllowIneligibleActivation,
   setAutoSwitchMode,
   sessionRecords,
   switchProfile,
@@ -25,6 +26,7 @@ import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
 import {
   AutoSwitchMode,
+  effectiveAllowIneligibleActivation,
   effectiveAutoSwitchMode,
   effectiveYoloMode,
   loadState,
@@ -53,6 +55,7 @@ Usage:
   agyx next                            Rotate to the next selectable account
   agyx autoswitch [off|provider-first|all-providers]
                                        Configure automatic quota failover (default: all-providers)
+  agyx ineligible [allow|block]        Configure whether ineligible profiles can be activated (default: allow)
   agyx yolo [on|off]                   Auto-approve all agy permissions via --dangerously-skip-permissions (default: on)
   agyx list [--verify]                 List profiles; optionally verify saved credentials
   agyx current                         Print the active profile
@@ -105,6 +108,12 @@ function parseAutoSwitchMode(value: string): AutoSwitchMode {
     return value as AutoSwitchMode;
   }
   throw new Error("Usage: agyx autoswitch [off|provider-first|all-providers]");
+}
+
+function parseIneligibleMode(value: string): boolean {
+  if (value === "allow") return true;
+  if (value === "block") return false;
+  throw new Error("Usage: agyx ineligible [allow|block]");
 }
 
 function parseQuotaScope(value: string | undefined): QuotaScope {
@@ -285,6 +294,18 @@ async function main(): Promise<number> {
       console.log(`Automatic quota failover: ${parsed}`);
       return 0;
     }
+    case "ineligible": {
+      const mode = args.shift();
+      if (args.length) throw new Error("Usage: agyx ineligible [allow|block]");
+      if (!mode) {
+        console.log(effectiveAllowIneligibleActivation(await loadState()) ? "allow" : "block");
+        return 0;
+      }
+      const allow = parseIneligibleMode(mode);
+      await setAllowIneligibleActivation(allow);
+      console.log(`Ineligible activation: ${allow ? "allow" : "block"}`);
+      return 0;
+    }
     case "yolo": {
       const value = args.shift();
       if (args.length) throw new Error("Usage: agyx yolo [on|off]");
@@ -383,6 +404,7 @@ async function main(): Promise<number> {
       console.log(`profiles: ${state.profiles.length}`);
       console.log(`active profile: ${state.activeProfile ?? "unmanaged"}`);
       console.log(`auto switch: ${effectiveAutoSwitchMode(state)}`);
+      console.log(`ineligible activation: ${effectiveAllowIneligibleActivation(state) ? "allow" : "block"}`);
       console.log(`supervised sessions: ${sessions.length}`);
       return 0;
     }

@@ -28,7 +28,7 @@ function padStartWidth(value: string, width: number): string {
 }
 
 function profileRows(
-  state: Pick<State, "activeProfile" | "profiles">,
+  state: Pick<State, "activeProfile" | "profiles" | "settings">,
   quotaScopes: QuotaScope[] = [],
 ): ProfileView[] {
   return buildProfileViews(state, new Date(), { quotaScopes });
@@ -277,7 +277,7 @@ const textPrompt = createPrompt<string | undefined, {
 });
 
 export function printProfileTable(
-  state: Pick<State, "activeProfile" | "profiles">,
+  state: Pick<State, "activeProfile" | "profiles" | "settings">,
   quotaScopes: QuotaScope[] = [],
 ): void {
   if (!state.profiles.length) {
@@ -314,7 +314,7 @@ export function printProfileTable(
 }
 
 export async function pickProfileAction(
-  state: Pick<State, "activeProfile" | "profiles">,
+  state: Pick<State, "activeProfile" | "profiles" | "settings">,
   mode: ProfilePickerMode,
   notice?: string,
   quotaScopes: QuotaScope[] = [],
@@ -334,6 +334,7 @@ export async function pickProfileAction(
       return selectNextProfile({
         version: 1,
         activeProfile: state.activeProfile,
+        settings: state.settings,
         profiles: state.profiles,
       }, new Date(), { quotaScopes }).name;
     } catch {

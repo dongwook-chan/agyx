@@ -1,4 +1,9 @@
-import { AutoSwitchMode, ProfileRecord, State } from "./config.js";
+import {
+  AutoSwitchMode,
+  effectiveAllowIneligibleActivation,
+  ProfileRecord,
+  State,
+} from "./config.js";
 import { QuotaScope } from "./quota.js";
 
 export type ProfileRuntimeStatus =
@@ -12,6 +17,7 @@ export type ProfileRuntimeStatus =
 export interface EffectiveStatusOptions {
   quotaScope?: QuotaScope;
   quotaScopes?: QuotaScope[];
+  allowIneligibleActivation?: boolean;
 }
 
 function effectiveScopes(options: EffectiveStatusOptions): QuotaScope[] {
@@ -51,11 +57,21 @@ export function isScopeQuotaExhausted(
   return Boolean(quota && quotaActive(quota.resetAt, now));
 }
 
-function isBaseSelectable(profile: ProfileRecord): boolean {
+function allowIneligibleActivation(options: EffectiveStatusOptions): boolean {
+  return options.allowIneligibleActivation ?? true;
+}
+
+function isBaseSelectable(
+  profile: ProfileRecord,
+  options: EffectiveStatusOptions = {},
+): boolean {
   return !profile.disabled
     && profile.credentialStatus !== "mismatch"
     && profile.credentialStatus !== "error"
-    && profile.eligibilityStatus !== "ineligible";
+    && (
+      profile.eligibilityStatus !== "ineligible"
+      || allowIneligibleActivation(options)
+    );
 }
 
 function targetScopesFor(scope: QuotaScope): QuotaScope[] {
@@ -134,8 +150,9 @@ function autoSwitchCategory(
   mode: Exclude<AutoSwitchMode, "off">,
   quotaScope: QuotaScope,
   now: Date,
+  options: EffectiveStatusOptions = {},
 ): number | undefined {
-  if (!isBaseSelectable(profile)) return undefined;
+  if (!isBaseSelectable(profile, options)) return undefined;
 
   const targetScopes = targetScopesFor(quotaScope);
   if (targetScopes.some((scope) => isScopeQuotaExhausted(profile, scope, now))) {
@@ -166,6 +183,9 @@ export function selectAutoSwitchProfile(
   now = new Date(),
 ): ProfileRecord {
   if (!state.profiles.length) throw new Error("No saved profiles.");
+  const options: EffectiveStatusOptions = {
+    allowIneligibleActivation: effectiveAllowIneligibleActivation(state),
+  };
   const activeIndex = state.activeProfile
     ? state.profiles.findIndex(({ name }) => name === state.activeProfile)
     : -1;
@@ -173,7 +193,7 @@ export function selectAutoSwitchProfile(
     .map((profile, index) => {
       const category = profile.name === state.activeProfile
         ? undefined
-        : autoSwitchCategory(profile, mode, quotaScope, now);
+        : autoSwitchCategory(profile, mode, quotaScope, now, options);
       if (category === undefined) return undefined;
       const offset = (index - activeIndex + state.profiles.length) % state.profiles.length;
       return {
@@ -199,7 +219,8 @@ export function isProfileSelectable(
   now = new Date(),
   options: EffectiveStatusOptions = {},
 ): boolean {
-  return effectiveProfileStatus(profile, now, options) === "ready";
+  return isBaseSelectable(profile, options)
+    && !exhaustedQuotaScopeForOptions(profile, options, now);
 }
 
 export function selectNextProfile(
@@ -208,6 +229,11 @@ export function selectNextProfile(
   options: EffectiveStatusOptions = {},
 ): ProfileRecord {
   if (!state.profiles.length) throw new Error("No saved profiles.");
+  const effectiveOptions: EffectiveStatusOptions = {
+    ...options,
+    allowIneligibleActivation: options.allowIneligibleActivation
+      ?? effectiveAllowIneligibleActivation(state),
+  };
   const activeIndex = state.activeProfile
     ? state.profiles.findIndex(({ name }) => name === state.activeProfile)
     : -1;
@@ -215,13 +241,13 @@ export function selectNextProfile(
   for (let offset = 1; offset <= state.profiles.length; offset += 1) {
     const profile = state.profiles[(activeIndex + offset + state.profiles.length)
       % state.profiles.length]!;
-    if (isProfileSelectable(profile, now, options)) return profile;
+    if (isProfileSelectable(profile, now, effectiveOptions)) return profile;
   }
 
   const resetEntries = state.profiles.flatMap((profile) => {
     const resets: Array<{ name: string; resetAt: string }> = [];
     if (profile.quotaResetAt) resets.push({ name: profile.name, resetAt: profile.quotaResetAt });
-    for (const scope of effectiveScopes(options)) {
+    for (const scope of effectiveScopes(effectiveOptions)) {
       const resetAt = profile.quotaScopes?.[scope]?.resetAt;
       if (resetAt) resets.push({ name: `${profile.name}:${scope}`, resetAt });
     }
@@ -233,7 +259,10 @@ export function selectNextProfile(
     .filter((profile) =>
       profile.credentialStatus === "mismatch"
       || profile.credentialStatus === "error"
-      || profile.eligibilityStatus === "ineligible"
+      || (
+        profile.eligibilityStatus === "ineligible"
+        && !allowIneligibleActivation(effectiveOptions)
+      )
     )
     .map((profile) =>
       profile.eligibilityStatus === "ineligible"

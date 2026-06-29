@@ -27,6 +27,7 @@ import {
   validateProfileName,
   AutoSwitchMode,
   effectiveAutoSwitchMode,
+  effectiveAllowIneligibleActivation,
 } from "./config.js";
 import { keychain } from "./keychain.js";
 import { detectCredentialEmail } from "./google_auth.js";
@@ -38,6 +39,7 @@ import {
 import { QuotaScope } from "./quota.js";
 import {
   effectiveProfileStatus,
+  isProfileSelectable,
   selectAutoSwitchProfile,
   selectNextProfile,
   shouldAutoSwitchAfterQuota,
@@ -376,8 +378,12 @@ export async function switchProfile(name: string): Promise<ProfileSwitchResult> 
         alreadyActive: true,
       };
     }
-    const status = effectiveProfileStatus(profile, new Date(), { quotaScopes });
-    if (status !== "ready") {
+    const selectionOptions = {
+      quotaScopes,
+      allowIneligibleActivation: effectiveAllowIneligibleActivation(initialState),
+    };
+    if (!isProfileSelectable(profile, new Date(), selectionOptions)) {
+      const status = effectiveProfileStatus(profile, new Date(), selectionOptions);
       throw new Error(`Profile '${name}' is not selectable: ${status}.`);
     }
     const sessions = await pauseAll();
@@ -443,6 +449,13 @@ export async function setAutoSwitchMode(mode: AutoSwitchMode): Promise<void> {
   const state = await loadState();
   state.settings = state.settings ?? {};
   state.settings.autoSwitchMode = mode;
+  await saveState(state);
+}
+
+export async function setAllowIneligibleActivation(allow: boolean): Promise<void> {
+  const state = await loadState();
+  state.settings = state.settings ?? {};
+  state.settings.allowIneligibleActivation = allow;
   await saveState(state);
 }
 

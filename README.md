@@ -122,6 +122,7 @@ agyx use work
 agyx use
 agyx next
 agyx autoswitch
+agyx ineligible
 agyx status
 ```
 
@@ -135,9 +136,17 @@ terminal table. Both show profile metadata:
 - `switches`: how many times agyx selected the profile through login/use/next
 
 `agyx next` uses name-sorted round-robin order, starting after the currently
-active profile. It skips profiles marked `disabled`, credential-mismatched,
-ineligible, or currently quota exhausted for the active provider scope. If a
-quota reset time has passed, the profile becomes selectable again.
+active profile. It skips profiles marked `disabled`, credential-mismatched, or
+currently quota exhausted for the active provider scope. If a quota reset time
+has passed, the profile becomes selectable again. Profiles marked `ineligible`
+remain visible as `ineligible` but are selectable by default because some such
+accounts can still be activated. To block them from `use`, `next`, and automatic
+quota failover candidates, run:
+
+```bash
+agyx ineligible block
+agyx ineligible allow
+```
 
 Account-changing commands (`save`, `login`, `use`, `next`, `remove`, `rename`,
 `list --verify`, and automatic quota failover) share a global auth switch lock,
