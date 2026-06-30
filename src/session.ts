@@ -12,13 +12,12 @@ import {
   recordProfileQuotaExhausted,
   recordProfileRequest,
   runtimeDir,
-  effectiveYoloMode,
 } from "./config.js";
 import {
   findRealAgy,
   isRestartable,
-  withConversation,
 } from "./processes.js";
+import { buildAgyLaunchArgs } from "./launch_args.js";
 import { parseEligibilityEventLine } from "./eligibility.js";
 import {
   isRequestEventLine,
@@ -62,19 +61,48 @@ function writeJSON(socket: Socket, value: unknown): void {
   socket.end(`${JSON.stringify(value)}\n`);
 }
 
-function triggerAutoSwitch(scope: QuotaScope): void {
+interface AutoSwitchAction {
+  kind?: string;
+  message?: string;
+  retryKey?: string;
+}
+
+async function triggerAutoSwitch(scope: QuotaScope): Promise<AutoSwitchAction | undefined> {
   const cliPath = process.argv[1];
-  if (!cliPath) return;
-  const child = spawn(process.execPath, [cliPath, "_auto-next", scope], {
-    cwd: process.cwd(),
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      AGYX_AUTO_SWITCH_TRIGGER: "1",
-    },
+  if (!cliPath) return undefined;
+  return await new Promise((resolvePromise) => {
+    const child = spawn(process.execPath, [cliPath, "_auto-next", scope], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        AGYX_AUTO_SWITCH_TRIGGER: "1",
+      },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => {
+      console.error(`\n[agyx] Automatic quota failover failed: ${error.message}`);
+      resolvePromise({ kind: "stop_retrying", retryKey: `quota:${scope}` });
+    });
+    child.on("exit", () => {
+      try {
+        const action = stdout.trim()
+          ? JSON.parse(stdout.trim()) as AutoSwitchAction
+          : undefined;
+        if (action?.message) console.error(action.message);
+        else if (stderr.trim()) console.error(stderr.trim());
+        resolvePromise(action);
+      } catch {
+        if (stderr.trim()) console.error(stderr.trim());
+        resolvePromise({ kind: "stop_retrying", retryKey: `quota:${scope}` });
+      }
+    });
   });
-  child.unref();
 }
 
 export async function supervise(args: string[]): Promise<number> {
@@ -105,6 +133,7 @@ export async function supervise(args: string[]): Promise<number> {
   let scanningLogEvents = false;
   let profileAtStart: string | undefined;
   let quotaMarkedScopes = new Set<QuotaScope>();
+  const autoSwitchStoppedScopes = new Set<QuotaScope>();
   let quotaInterval: NodeJS.Timeout | undefined;
   let persistCount = 0;
   let currentModelLabel: string | undefined;
@@ -177,6 +206,7 @@ export async function supervise(args: string[]): Promise<number> {
         const event = parseQuotaEventLine(line);
         if (!event) continue;
         const scope = currentQuotaScope ?? "unknown";
+        if (autoSwitchStoppedScopes.has(scope)) continue;
         if (quotaMarkedScopes.has(scope)) continue;
         quotaMarkedScopes.add(scope);
         await recordProfileQuotaExhausted(profileName, {
@@ -184,7 +214,8 @@ export async function supervise(args: string[]): Promise<number> {
           scope,
           modelLabel: currentModelLabel,
         });
-        triggerAutoSwitch(scope);
+        const action = await triggerAutoSwitch(scope);
+        if (action?.kind === "stop_retrying") autoSwitchStoppedScopes.add(scope);
       }
       if (modelChanged) await persist();
     } catch {
@@ -202,15 +233,7 @@ export async function supervise(args: string[]): Promise<number> {
     currentModelLabel = undefined;
     currentQuotaScope = undefined;
     const state = await loadState();
-    const launchArgs = withConversation(args, conversationId);
-    if (!launchArgs.some((argument) =>
-      argument === "--log-file" || argument.startsWith("--log-file=")
-    )) {
-      launchArgs.push("--log-file", logPath);
-    }
-    if (effectiveYoloMode(state) && !launchArgs.includes("--dangerously-skip-permissions")) {
-      launchArgs.push("--dangerously-skip-permissions");
-    }
+    const launchArgs = buildAgyLaunchArgs(args, { conversationId, logPath, state });
     child = spawn(realAgy, launchArgs, {
       cwd: process.cwd(),
       stdio: "inherit",

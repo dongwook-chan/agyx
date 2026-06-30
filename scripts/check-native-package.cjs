@@ -3,16 +3,15 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-
-const expected = {
-  "darwin:arm64": "agyx-supervisor-darwin-arm64",
-  "linux:arm64": "agyx-supervisor-linux-arm64",
-};
+const {
+  supportedNativeSupervisors,
+  hostKey,
+} = require("./native-targets.cjs");
 
 const launcher = path.join(__dirname, "..", "bin", "agyx-supervisor");
 const required = process.env.AGYX_REQUIRE_ALL_NATIVE === "1"
-  ? Object.values(expected)
-  : [expected[`${process.platform}:${process.arch}`]].filter(Boolean);
+  ? Object.values(supportedNativeSupervisors)
+  : [supportedNativeSupervisors[hostKey()]].filter(Boolean);
 
 try {
   fs.accessSync(launcher, fs.constants.X_OK);

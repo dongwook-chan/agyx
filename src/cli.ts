@@ -3,6 +3,7 @@ import {
   activateProfile,
   activeQuotaScopes,
   autoSwitchAfterQuota,
+  autoSwitchAfterQuotaAction,
   loginProfile,
   pauseAll,
   resumeAll,
@@ -22,6 +23,7 @@ import {
   shellIntegrationPath,
 } from "./install.js";
 import { keychain } from "./keychain.js";
+import { buildAgyLaunchArgs } from "./launch_args.js";
 import { maybeRunOnboarding } from "./onboarding.js";
 import { findRealAgy } from "./processes.js";
 import {
@@ -412,8 +414,24 @@ async function main(): Promise<number> {
       await activateProfile(args[0] ?? "");
       return 0;
     case "_auto-next":
-      await autoSwitchAfterQuota(parseQuotaScope(args[0]));
+      console.log(JSON.stringify(await autoSwitchAfterQuotaAction(parseQuotaScope(args[0]))));
       return 0;
+    case "_supervisor-launch-args": {
+      const payload = JSON.parse(args[0] ?? "{}") as {
+        args?: string[];
+        conversationId?: string;
+        logPath?: string;
+      };
+      if (!payload.logPath) throw new Error("Usage: agyx _supervisor-launch-args <json>");
+      console.log(JSON.stringify({
+        argv: buildAgyLaunchArgs(payload.args ?? [], {
+          conversationId: payload.conversationId,
+          logPath: payload.logPath,
+          state: await loadState(),
+        }),
+      }));
+      return 0;
+    }
     default:
       throw new Error(`Unknown command: ${command}\n\n${help}`);
   }

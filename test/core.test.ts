@@ -16,6 +16,7 @@ import {
 import type { State } from "../src/config.js";
 import { parseEligibilityEventLine } from "../src/eligibility.js";
 import { shellInit } from "../src/install.js";
+import { buildAgyLaunchArgs } from "../src/launch_args.js";
 import { buildProfileViews } from "../src/profile_view.js";
 import {
   parseModelEventLine,
@@ -62,6 +63,40 @@ test("activation keeps exhausted quota until reset time", () => {
 test("shell integration uses the lightweight agy shim", () => {
   assert.match(shellInit(), /command agyx-supervisor "\$@"/);
   assert.match(shellInit(), /command agyx-agy "\$@"/);
+});
+
+test("buildAgyLaunchArgs injects the agy yolo flag once", () => {
+  assert.deepEqual(
+    buildAgyLaunchArgs(["--model", "gemini"], {
+      logPath: "/tmp/agy.log",
+      state: { settings: { yolo: true } },
+    }),
+    ["--dangerously-skip-permissions", "--model", "gemini", "--log-file", "/tmp/agy.log"],
+  );
+  assert.deepEqual(
+    buildAgyLaunchArgs(["--dangerously-skip-permissions"], {
+      logPath: "/tmp/agy.log",
+      state: { settings: { yolo: true } },
+    }),
+    ["--dangerously-skip-permissions", "--log-file", "/tmp/agy.log"],
+  );
+});
+
+test("buildAgyLaunchArgs honors yolo off and rejects Codex yolo flag", () => {
+  assert.deepEqual(
+    buildAgyLaunchArgs(["--model", "gemini"], {
+      logPath: "/tmp/agy.log",
+      state: { settings: { yolo: false } },
+    }),
+    ["--model", "gemini", "--log-file", "/tmp/agy.log"],
+  );
+  assert.throws(
+    () => buildAgyLaunchArgs(["--dangerously-bypass-approvals-and-sandbox"], {
+      logPath: "/tmp/agy.log",
+      state: { settings: { yolo: true } },
+    }),
+    /Codex option/,
+  );
 });
 
 test("native supervisor is scoped to supported arm64 Unix hosts", () => {

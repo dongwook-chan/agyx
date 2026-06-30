@@ -4,17 +4,17 @@
 const { copyFileSync, mkdirSync, chmodSync } = require("node:fs");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
+const {
+  supportedNativeSupervisors,
+  hostKey,
+  supportedHostText,
+} = require("./native-targets.cjs");
 
-const supported = new Map([
-  ["darwin:arm64", "agyx-supervisor-darwin-arm64"],
-  ["linux:arm64", "agyx-supervisor-linux-arm64"],
-]);
-
-const key = `${process.platform}:${process.arch}`;
-const binaryName = supported.get(key);
+const key = hostKey();
+const binaryName = supportedNativeSupervisors[key];
 if (!binaryName) {
   console.error(`Unsupported native build host: ${key}`);
-  console.error("Supported native build hosts: darwin:arm64, linux:arm64");
+  console.error(`Supported native build hosts: ${supportedHostText()}`);
   process.exit(1);
 }
 

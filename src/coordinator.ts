@@ -271,6 +271,15 @@ export interface ProfileSwitchResult {
   alreadyActive?: boolean;
 }
 
+export interface AutoSwitchAction {
+  kind: "none" | "switched" | "stop_retrying";
+  reason?: string;
+  profile?: string;
+  email?: string;
+  message?: string;
+  retryKey?: string;
+}
+
 function resolveProfileName(
   state: Awaited<ReturnType<typeof loadState>>,
   nameInput: string | undefined,
@@ -503,6 +512,28 @@ export async function autoSwitchAfterQuota(
       }
     });
   });
+}
+
+export async function autoSwitchAfterQuotaAction(
+  quotaScope: QuotaScope,
+): Promise<AutoSwitchAction> {
+  try {
+    const result = await autoSwitchAfterQuota(quotaScope);
+    if (!result) return { kind: "none" };
+    return {
+      kind: "switched",
+      profile: result.name,
+      email: result.email,
+      message: `\n[agyx] Switched to profile '${result.name}' after quota was reached.`,
+    };
+  } catch (error) {
+    return {
+      kind: "stop_retrying",
+      reason: "auto_switch_failed",
+      retryKey: `quota:${quotaScope}`,
+      message: `\n[agyx] Automatic quota failover stopped: ${(error as Error).message}`,
+    };
+  }
 }
 
 export async function verifyAllProfiles(): Promise<State> {

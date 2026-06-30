@@ -61,6 +61,7 @@ struct Supervisor {
     log_offset: usize,
     profile_at_start: Option<String>,
     quota_marked_scopes: HashSet<String>,
+    auto_switch_stopped_scopes: HashSet<String>,
     current_model_label: Option<String>,
     current_quota_scope: Option<String>,
     persist_count: usize,
@@ -93,7 +94,10 @@ impl Supervisor {
             self.persist_count,
         ));
         self.persist_count += 1;
-        write_json_file(&temporary, &serde_json::to_value(&record).map_err(to_string)?)?;
+        write_json_file(
+            &temporary,
+            &serde_json::to_value(&record).map_err(to_string)?,
+        )?;
         fs::rename(&temporary, &self.record_path).map_err(to_string)?;
         Ok(record)
     }
@@ -106,11 +110,8 @@ impl Supervisor {
         self.current_model_label = None;
         self.current_quota_scope = None;
 
-        let mut launch_args = with_conversation(&self.args, self.conversation_id.as_deref());
-        if !launch_args.iter().any(|arg| arg == "--log-file" || arg.starts_with("--log-file=")) {
-            launch_args.push("--log-file".to_string());
-            launch_args.push(self.log_path.to_string_lossy().to_string());
-        }
+        let launch_args =
+            supervisor_launch_args(&self.args, self.conversation_id.as_deref(), &self.log_path)?;
 
         let child = Command::new(&self.real_agy)
             .args(&launch_args)
@@ -195,6 +196,9 @@ impl Supervisor {
                     .current_quota_scope
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
+                if self.auto_switch_stopped_scopes.contains(&scope) {
+                    continue;
+                }
                 if self.quota_marked_scopes.contains(&scope) {
                     continue;
                 }
@@ -206,7 +210,14 @@ impl Supervisor {
                     &scope,
                     self.current_model_label.as_deref(),
                 );
-                trigger_auto_switch(&scope);
+                if let Some(action) = trigger_auto_switch(&scope) {
+                    if let Some(message) = action.get("message").and_then(Value::as_str) {
+                        eprintln!("{message}");
+                    }
+                    if action.get("kind").and_then(Value::as_str) == Some("stop_retrying") {
+                        self.auto_switch_stopped_scopes.insert(scope);
+                    }
+                }
             }
         }
 
@@ -249,7 +260,10 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     let log_path = logs.join(format!("session-{id}.log"));
     let _ = fs::remove_file(&socket_path);
     let real_agy = find_real_agy()?;
-    let cwd = env::current_dir().map_err(to_string)?.to_string_lossy().to_string();
+    let cwd = env::current_dir()
+        .map_err(to_string)?
+        .to_string_lossy()
+        .to_string();
 
     let supervisor = Arc::new(Mutex::new(Supervisor {
         id,
@@ -267,6 +281,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         log_offset: 0,
         profile_at_start: None,
         quota_marked_scopes: HashSet::new(),
+        auto_switch_stopped_scopes: HashSet::new(),
         current_model_label: None,
         current_quota_scope: None,
         persist_count: 0,
@@ -281,7 +296,10 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         let mut guard = supervisor.lock().map_err(to_string)?;
         guard.scan_log_events();
         let exited = match guard.child.as_mut() {
-            Some(child) => child.try_wait().map_err(to_string)?.map(|status| status.code().unwrap_or(1)),
+            Some(child) => child
+                .try_wait()
+                .map_err(to_string)?
+                .map(|status| status.code().unwrap_or(1)),
             None => None,
         };
         if let Some(code) = exited {
@@ -297,7 +315,10 @@ fn run(args: Vec<String>) -> Result<i32, String> {
                 cleanup_paths(&socket_path, &record_path);
                 return Ok(0);
             } else {
-                eprintln!("\n[agyx] Session ended unexpectedly (exit code {}). Restarting...", code);
+                eprintln!(
+                    "\n[agyx] Session ended unexpectedly (exit code {}). Restarting...",
+                    code
+                );
                 thread::sleep(StdDuration::from_secs(1));
                 guard.start_child()?;
             }
@@ -305,7 +326,10 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     }
 }
 
-fn start_socket_server(supervisor: Arc<Mutex<Supervisor>>, socket_path: PathBuf) -> Result<(), String> {
+fn start_socket_server(
+    supervisor: Arc<Mutex<Supervisor>>,
+    socket_path: PathBuf,
+) -> Result<(), String> {
     let listener = UnixListener::bind(socket_path).map_err(to_string)?;
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -341,7 +365,9 @@ fn handle_socket(supervisor: Arc<Mutex<Supervisor>>, mut stream: UnixStream) -> 
             let socket_path = guard.socket_path.clone();
             let record_path = guard.record_path.clone();
             let reply = json!({ "ok": true });
-            let _ = stream.write_all(format!("{}\n", serde_json::to_string(&reply).map_err(to_string)?).as_bytes());
+            let _ = stream.write_all(
+                format!("{}\n", serde_json::to_string(&reply).map_err(to_string)?).as_bytes(),
+            );
             cleanup_paths(&socket_path, &record_path);
             std::process::exit(0);
         }
@@ -427,7 +453,9 @@ fn save_state(state: &Value) -> Result<(), String> {
 fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
     let temporary = path.with_extension(format!(
         "{}.{}.tmp",
-        path.extension().and_then(|extension| extension.to_str()).unwrap_or("json"),
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("json"),
         std::process::id(),
     ));
     let mut file = OpenOptions::new()
@@ -437,8 +465,12 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
         .mode(0o600)
         .open(&temporary)
         .map_err(to_string)?;
-    file.write_all(serde_json::to_string_pretty(value).map_err(to_string)?.as_bytes())
-        .map_err(to_string)?;
+    file.write_all(
+        serde_json::to_string_pretty(value)
+            .map_err(to_string)?
+            .as_bytes(),
+    )
+    .map_err(to_string)?;
     file.write_all(b"\n").map_err(to_string)?;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).map_err(to_string)?;
     fs::rename(&temporary, path).map_err(to_string)?;
@@ -450,6 +482,49 @@ fn active_profile() -> Result<Option<String>, String> {
         .get("activeProfile")
         .and_then(Value::as_str)
         .map(str::to_string))
+}
+
+fn supervisor_launch_args(
+    args: &[String],
+    conversation_id: Option<&str>,
+    log_path: &Path,
+) -> Result<Vec<String>, String> {
+    let payload = json!({
+        "args": args,
+        "conversationId": conversation_id,
+        "logPath": log_path.to_string_lossy(),
+    });
+    let payload = serde_json::to_string(&payload).map_err(to_string)?;
+    let output = if let Ok(cli_path) = env::var("AGYX_CLI_PATH") {
+        let node_path = env::var("AGYX_NODE_PATH").unwrap_or_else(|_| "node".to_string());
+        Command::new(node_path)
+            .arg(cli_path)
+            .arg("_supervisor-launch-args")
+            .arg(payload)
+            .output()
+            .map_err(to_string)?
+    } else {
+        Command::new("agyx")
+            .arg("_supervisor-launch-args")
+            .arg(payload)
+            .output()
+            .map_err(to_string)?
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("launch args helper failed: {}", stderr.trim()));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: Value = serde_json::from_str(stdout.trim()).map_err(to_string)?;
+    let argv = value
+        .get("argv")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "launch args helper did not return argv".to_string())?;
+    Ok(argv
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect())
 }
 
 fn find_real_agy() -> Result<String, String> {
@@ -501,7 +576,9 @@ fn is_executable(path: &Path) -> bool {
 }
 
 fn is_restartable(args: &[String]) -> bool {
-    !args.iter().any(|arg| arg == "-p" || arg == "--print" || arg == "--prompt")
+    !args
+        .iter()
+        .any(|arg| arg == "-p" || arg == "--print" || arg == "--prompt")
 }
 
 fn is_abnormal_exit_log(log_path: &Path) -> bool {
@@ -522,34 +599,6 @@ fn is_abnormal_exit_log(log_path: &Path) -> bool {
     } else {
         false
     }
-}
-
-fn with_conversation(args: &[String], conversation_id: Option<&str>) -> Vec<String> {
-    let Some(conversation_id) = conversation_id else {
-        return args.to_vec();
-    };
-    let mut result = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        let argument = &args[index];
-        if argument == "-c" || argument == "--continue" {
-            index += 1;
-            continue;
-        }
-        if argument == "--conversation" {
-            index += 2;
-            continue;
-        }
-        if argument.starts_with("--conversation=") {
-            index += 1;
-            continue;
-        }
-        result.push(argument.clone());
-        index += 1;
-    }
-    result.push("--conversation".to_string());
-    result.push(conversation_id.to_string());
-    result
 }
 
 fn detect_conversation(content: &str) -> Option<String> {
@@ -583,7 +632,9 @@ fn classify_model_scope(label: &str) -> String {
 }
 
 fn parse_model_event_line(line: &str) -> Option<(String, String)> {
-    if let Ok(pattern) = Regex::new(r#"(?i)Propagating selected model override to backend:\s+label="([^"]+)""#) {
+    if let Ok(pattern) =
+        Regex::new(r#"(?i)Propagating selected model override to backend:\s+label="([^"]+)""#)
+    {
         if let Some(label) = pattern.captures(line).and_then(|capture| capture.get(1)) {
             let label = label.as_str().to_string();
             return Some((label.clone(), classify_model_scope(&label)));
@@ -623,7 +674,10 @@ fn parse_quota_event_line(line: &str) -> Option<(String, Option<String>)> {
     let lower = line.to_lowercase();
     let has_429 = regex_match(r"\b429\b", line);
     let code_429 = regex_match(r"(?i)\bcode\s*[:=]?\s*429\b", line);
-    let quota_limit = regex_match(r"(?i)(quota|rate limit).*(exceeded|exhausted|reached)", line);
+    let quota_limit = regex_match(
+        r"(?i)(quota|rate limit).*(exceeded|exhausted|reached)",
+        line,
+    );
     let looks_like_quota = lower.contains("resource_exhausted")
         || lower.contains("individual quota reached")
         || code_429
@@ -649,14 +703,19 @@ fn parse_reset_at(line: &str) -> Option<String> {
     if let Ok(pattern) = Regex::new(r"(?i)resets?\s+in\s+([0-9a-zA-Z.\s]+)") {
         if let Some(value) = pattern.captures(line).and_then(|capture| capture.get(1)) {
             if let Some(duration) = parse_duration(value.as_str()) {
-                return Some((Utc::now() + duration).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+                return Some(
+                    (Utc::now() + duration).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                );
             }
         }
     }
     if let Ok(pattern) = Regex::new(r#"(?i)retry-after["'\s:=]+(\d+)"#) {
         if let Some(seconds) = pattern.captures(line).and_then(|capture| capture.get(1)) {
             if let Ok(seconds) = seconds.as_str().parse::<i64>() {
-                return Some((Utc::now() + Duration::seconds(seconds)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+                return Some(
+                    (Utc::now() + Duration::seconds(seconds))
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                );
             }
         }
     }
@@ -732,7 +791,11 @@ fn record_profile_quota_exhausted(
     if let Some(profile) = find_profile_mut(&mut state, name) {
         profile["lastQuotaErrorAt"] = Value::String(now.clone());
         profile["lastQuotaReason"] = Value::String(reason.to_string());
-        if !profile.get("quotaScopes").map(Value::is_object).unwrap_or(false) {
+        if !profile
+            .get("quotaScopes")
+            .map(Value::is_object)
+            .unwrap_or(false)
+        {
             profile["quotaScopes"] = json!({});
         }
         let mut record = json!({
@@ -776,23 +839,40 @@ fn remove_key(value: &mut Value, key: &str) {
     }
 }
 
-fn trigger_auto_switch(scope: &str) {
-    let mut command = if let Ok(cli_path) = env::var("AGYX_CLI_PATH") {
+fn trigger_auto_switch(scope: &str) -> Option<Value> {
+    let output = if let Ok(cli_path) = env::var("AGYX_CLI_PATH") {
         let node_path = env::var("AGYX_NODE_PATH").unwrap_or_else(|_| "node".to_string());
         let mut command = Command::new(node_path);
         command.arg(cli_path);
         command
+            .arg("_auto-next")
+            .arg(scope)
+            .stdin(Stdio::null())
+            .env("AGYX_AUTO_SWITCH_TRIGGER", "1")
+            .output()
+            .ok()?
     } else {
         Command::new("agyx")
+            .arg("_auto-next")
+            .arg(scope)
+            .stdin(Stdio::null())
+            .env("AGYX_AUTO_SWITCH_TRIGGER", "1")
+            .output()
+            .ok()?
     };
-    let _ = command
-        .arg("_auto-next")
-        .arg(scope)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .env("AGYX_AUTO_SWITCH_TRIGGER", "1")
-        .spawn();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+        return Some(json!({
+            "kind": "stop_retrying",
+            "reason": "policy_helper_failed",
+            "retryKey": format!("quota:{scope}")
+        }));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim()).ok()
 }
 
 fn regex_match(pattern: &str, input: &str) -> bool {

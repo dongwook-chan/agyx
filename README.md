@@ -10,7 +10,10 @@ Keychain credential, and restart each conversation in its original terminal.
 - Node.js 20 or newer
 - Google Antigravity CLI (`agy`)
 
-On macOS, credentials are saved securely in the native system Keychain. On Linux, if a system keyring service is not available (such as in headless or SSH environments), agyx automatically falls back to a file-based credential store (stored under `~/.config/agyx/credentials.json` with secure `0600` permissions).
+On macOS, credentials are saved securely in the native system Keychain. On Linux,
+credentials are stored in owner-only files: the active Antigravity credential
+uses Antigravity's local credential path, and saved agyx profiles are stored
+under `~/.config/agyx/credentials/`.
 
 The npm package intentionally targets ARM64 Unix hosts only. Installation
 aborts on other hosts. The long-running `agy` supervisor runs through
@@ -20,10 +23,27 @@ Rust binary for the current host:
 - `bin/agyx-supervisor-darwin-arm64`
 - `bin/agyx-supervisor-linux-arm64`
 
-Because the launcher uses `exec`, the long-running process is the Rust
+Supported native supervisor architectures:
+
+| host | shipped native binary | install supported |
+| --- | --- | --- |
+| `darwin/arm64` | yes | yes |
+| `linux/arm64` | yes | yes |
+
+Because the launcher uses `exec`, the long-running process is normally the Rust
 supervisor itself; Node is not kept alive for managed `agy` sessions. In a local
 development checkout, the launcher falls back to `agyx-agy` when the matching
-native binary has not been built.
+native binary has not been built. The native and Node supervisors are expected
+to match observable behavior, including restartability rules, `--log-file`
+injection, conversation resume, quota detection, and the `agyx yolo` setting.
+
+The supervisor is deliberately kept out of account-selection policy. On quota
+events it calls the JS policy helper (`agyx _auto-next <scope>`) and reads an
+action JSON response. The helper owns autoswitch mode handling, profile
+selection, credential/ineligible filtering, no-selectable-profile handling, and
+user-facing messages. The supervisor prints the helper message and either
+continues, switches through the shared pause/switch/resume transaction, or stops
+retrying that quota scope for the current supervised session.
 
 ## Install
 
@@ -76,6 +96,12 @@ agy --project <project-id>
 agy --dangerously-skip-permissions
 agy -p "one-shot prompt"
 ```
+
+`agyx` defaults to yolo mode and injects agy's own
+`--dangerously-skip-permissions` flag for supervised sessions unless you already
+passed it yourself. Configure it with `agyx yolo [on|off]`. Codex's
+`--dangerously-bypass-approvals-and-sandbox` flag is rejected by the launch-args
+builder because it is not an agy option.
 
 One-shot `--print`/`--prompt` commands are not automatically restarted, which
 prevents duplicate requests.
@@ -186,6 +212,10 @@ exhausted for the active profile before switching accounts. `provider-first`
 switches as soon as the current provider scope is exhausted. Automatic switching
 uses the same global pause/switch/resume transaction as `agyx next`.
 
+If no profile is selectable, the policy helper reports the reason to the active
+terminal and the supervisor suppresses repeated autoswitch attempts for that
+quota scope in the current session.
+
 ## Native supervisor build
 
 For local native packaging on the current host:
@@ -207,7 +237,9 @@ AGYX_REQUIRE_ALL_NATIVE=1 npm run check:native-package
 ## Security
 
 - **macOS**: Credentials remain securely stored in the native macOS Keychain.
-- **Linux**: Credentials are saved in the system keyring if available. In headless, SSH, or server environments where no DBus/secret-service keyring is running, agyx automatically falls back to storing credentials in a local JSON file (`~/.config/agyx/credentials.json`) set to secure owner-only read/write permission (`0600`).
+- **Linux**: The active Antigravity credential is stored at
+  `~/.gemini/antigravity-cli/antigravity-oauth-token`; saved agyx profile
+  credentials are stored as owner-only files under `~/.config/agyx/credentials/`.
 - Profile metadata (without credentials) is stored in `~/.config/agyx/state.json` with `0600` permissions.
 - Account changes wait for supervised sessions to stop before modifying the shared Keychain or credential file to avoid corruption.
 
